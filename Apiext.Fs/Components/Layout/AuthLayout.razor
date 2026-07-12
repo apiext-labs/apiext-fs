@@ -1,0 +1,27 @@
+@inherits LayoutComponentBase
+
+<div class="apiextfs-user-layout">
+    <div class="apiextfs-user-layout-content">
+        <div class="apiextfs-user-layout-panel">
+            <div class="apiextfs-user-layout-top">
+                <div class="apiextfs-user-layout-header">
+                    <a href="/_apiextfs/login">
+                        <img alt="logo" class="apiextfs-user-layout-logo" src="/_assets/logo.svg" />
+                        <span class="apiextfs-user-layout-title">Apiext.Fs</span>
+                    </a>
+                </div>
+                <div class="apiextfs-user-layout-desc">S3 兼容文件存储管理控制台</div>
+            </div>
+            @Body
+        </div>
+    </div>
+    <div class="apiextfs-user-layout-footer">
+        Copyright © @DateTime.Now.Year Apiext.Fs
+    </div>
+</div>
+
+<div id="blazor-error-ui" data-nosnippet>
+    发生了未处理的错误。
+    <a href="." class="reload">重新加载</a>
+    <span class="dismiss">🗙</span>
+</div>

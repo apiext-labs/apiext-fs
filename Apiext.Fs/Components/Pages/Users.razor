@@ -1,0 +1,179 @@
+@page "/_apiextfs/users"
+@layout AppLayout
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@using System.Security.Claims
+@using AntDesign.ProLayout
+@inject IUserManagementService UserMgmt
+@inject NavigationManager Nav
+@inject MessageService Message
+@inject ModalService Modal
+
+<PageTitle>用户 — Apiext.Fs</PageTitle>
+
+@if (!_isSuperAdmin)
+{
+    <PageContainer Title="用户">
+        <Result Status="@ResultStatus.Http403" Title="403" SubTitle="你没有管理用户的权限。" />
+    </PageContainer>
+}
+else
+{
+    <PageContainer Title="用户">
+        <Breadcrumb>
+            <Breadcrumb>
+                <BreadcrumbItem>管理</BreadcrumbItem>
+                <BreadcrumbItem>用户</BreadcrumbItem>
+            </Breadcrumb>
+        </Breadcrumb>
+        <Content>
+            <AntDesign.Text Type="@TextElementType.Secondary">管理本地数据库账号。</AntDesign.Text>
+        </Content>
+        <Extra>
+            <Button Type="@ButtonType.Primary" Icon="plus" OnClick="OpenAdd">新增用户</Button>
+        </Extra>
+        <ChildContent>
+            <Card>
+                <Table TItem="UserDto" DataSource="_users" Loading="_loading" Responsive>
+                    <Column TData="string" Title="用户名">
+                        <Text>@context.Username</Text>
+                    </Column>
+                    <Column TData="bool" Title="角色">
+                        @if (context.IsSuperAdmin)
+                        {
+                            <Tag Color="@PresetColor.Gold.ToString().ToLowerInvariant()">超级管理员</Tag>
+                        }
+                        else
+                        {
+                            <Tag>普通用户</Tag>
+                        }
+                    </Column>
+                    <ActionColumn Title="操作">
+                        <Space>
+                            <SpaceItem>
+                                <Button Type="@ButtonType.Link" OnClick="() => EditUser(context.Id)">编辑</Button>
+                            </SpaceItem>
+                            @if (context.Id.ToString() != _currentUserId)
+                            {
+                                <SpaceItem>
+                                    <Button Type="@ButtonType.Link" Danger OnClick="() => RequestDelete(context.Id, context.Username)">删除</Button>
+                                </SpaceItem>
+                            }
+                        </Space>
+                    </ActionColumn>
+                </Table>
+            </Card>
+        </ChildContent>
+    </PageContainer>
+
+    <Modal Title="新增用户"
+           Visible="_showAdd"
+           OnOk="AddUserAsync"
+           OnCancel="() => _showAdd = false"
+           OkText="@("创建")"
+           CancelText="@("取消")"
+           ConfirmLoading="_adding">
+        <Form Model="_addModel" LabelColSpan="6" WrapperColSpan="18">
+            <FormItem Label="用户名">
+                <Input @bind-Value="context.Username" Placeholder="用户名" />
+            </FormItem>
+            <FormItem Label="密码">
+                <InputPassword @bind-Value="context.Password" Placeholder="密码" />
+            </FormItem>
+            <FormItem Label="超级管理员">
+                <Switch @bind-Value="context.IsSuperAdmin" />
+            </FormItem>
+        </Form>
+    </Modal>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthState { get; set; }
+
+    private IReadOnlyList<UserDto> _users = [];
+    private string? _currentUserId;
+    private bool _isSuperAdmin;
+    private bool _loading = true;
+
+    private bool _showAdd;
+    private bool _adding;
+    private readonly AddUserModel _addModel = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthState is not null)
+        {
+            var s = await AuthState;
+            _currentUserId = s.User.FindFirstValue(ClaimTypes.NameIdentifier);
+            _isSuperAdmin  = s.User.FindFirstValue("is_super_admin") == "true";
+        }
+        if (_isSuperAdmin) await LoadAsync();
+        else _loading = false;
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _users = await UserMgmt.GetAllAsync();
+        _loading = false;
+    }
+
+    private void EditUser(Guid id) => Nav.NavigateTo($"/_apiextfs/users/{id}");
+
+    private void OpenAdd()
+    {
+        _addModel.Username = string.Empty;
+        _addModel.Password = string.Empty;
+        _addModel.IsSuperAdmin = false;
+        _showAdd = true;
+    }
+
+    private async Task AddUserAsync()
+    {
+        _adding = true;
+        try
+        {
+            var (ok, error) = await UserMgmt.CreateAsync(_addModel.Username, _addModel.Password, _addModel.IsSuperAdmin);
+            if (ok)
+            {
+                _showAdd = false;
+                Message.Success("用户已创建。");
+                await LoadAsync();
+            }
+            else
+            {
+                Message.Error(error!);
+            }
+        }
+        finally
+        {
+            _adding = false;
+        }
+    }
+
+    private void RequestDelete(Guid id, string username)
+    {
+        Modal.Confirm(new ConfirmOptions
+        {
+            Title = "删除用户",
+            Content = $"确定要删除 {username} 吗？此操作不可撤销。",
+            OkText = "确认删除",
+            CancelText = "取消",
+            OkType = ButtonType.Primary,
+            OnOk = async _ => await ConfirmDeleteAsync(id)
+        });
+    }
+
+    private async Task ConfirmDeleteAsync(Guid id)
+    {
+        var (ok, error) = await UserMgmt.DeleteAsync(id);
+        if (ok) { Message.Success("用户已删除。"); await LoadAsync(); }
+        else Message.Error(error!);
+    }
+
+    private sealed class AddUserModel
+    {
+        public string Username { get; set; } = string.Empty;
+        public string Password { get; set; } = string.Empty;
+        public bool IsSuperAdmin { get; set; }
+    }
+}

@@ -1,0 +1,91 @@
+@page "/_apiextfs/login"
+@layout AuthLayout
+@using Microsoft.EntityFrameworkCore
+@inject IDbContextFactory<Apiext.Fs.Data.AppDbContext> DbFactory
+@inject IConfiguration Config
+@inject NavigationManager Nav
+
+@code {
+    [SupplyParameterFromQuery] public string? Error { get; set; }
+    [SupplyParameterFromQuery] public string? Created { get; set; }
+    [SupplyParameterFromQuery] public string? ReturnUrl { get; set; }
+
+    private bool _staticAllowed;
+    private bool _hasDbUsers;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _staticAllowed = Config.GetValue<bool>("UseStaticAccount") && !string.IsNullOrEmpty(Config.GetValue<string?>("StaticUser"));
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        _hasDbUsers = await db.Users.AnyAsync();
+
+        // If no static account and no DB users → redirect to setup
+        if (!_staticAllowed && !_hasDbUsers)
+            Nav.NavigateTo("/_apiextfs/setup", replace: true);
+    }
+}
+
+<PageTitle>登录 - Apiext.Fs</PageTitle>
+
+<div class="apiextfs-user-card">
+    @if (Created == "1")
+    {
+        <Alert Type="@AlertType.Success"
+               Message="管理员账号已创建，请登录。"
+               ShowIcon="true"
+               Class="apiextfs-user-alert" />
+    }
+    @if (Error == "1")
+    {
+        <Alert Type="@AlertType.Error"
+               Message="用户名或密码不正确。"
+               ShowIcon="true"
+               Class="apiextfs-user-alert" />
+    }
+
+    <form method="post" action="/_apiextfs/auth/login" class="apiextfs-user-form" autocomplete="on">
+        <input type="hidden" name="ReturnUrl" value="@ReturnUrl" />
+
+        <div class="apiextfs-user-field">
+            <label class="apiextfs-user-label" for="Username">用户名</label>
+            <span class="ant-input-affix-wrapper ant-input-affix-wrapper-lg">
+                <span class="ant-input-prefix">
+                    <Icon Type="user" Class="apiextfs-user-prefix-icon" />
+                </span>
+                <input id="Username"
+                       name="Username"
+                       type="text"
+                       class="ant-input ant-input-lg"
+                       autocomplete="username"
+                       required
+                       autofocus
+                       placeholder="Access Key / 用户名" />
+            </span>
+        </div>
+
+        <div class="apiextfs-user-field">
+            <label class="apiextfs-user-label" for="Password">密码</label>
+            <span class="ant-input-affix-wrapper ant-input-affix-wrapper-lg">
+                <span class="ant-input-prefix">
+                    <Icon Type="lock" Class="apiextfs-user-prefix-icon" />
+                </span>
+                <input id="Password"
+                       name="Password"
+                       type="password"
+                       class="ant-input ant-input-lg"
+                       autocomplete="current-password"
+                       required
+                       placeholder="Secret Key / 密码" />
+            </span>
+        </div>
+
+        <button type="submit" class="ant-btn ant-btn-primary ant-btn-lg ant-btn-block apiextfs-user-submit">
+            登录
+        </button>
+    </form>
+
+    <div class="apiextfs-user-other">
+        S3 客户端使用同一组凭据：Access Key 为用户名，Secret Key 为密码。
+    </div>
+</div>

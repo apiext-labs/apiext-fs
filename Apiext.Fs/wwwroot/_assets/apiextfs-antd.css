@@ -1,0 +1,818 @@
+/* ─────────────────────────────────────────────────────────────
+   Apiext.Fs — AntDesign-era styles
+   Base tokens + auth shell + ProLayout tweaks + shared helpers
+   ───────────────────────────────────────────────────────────── */
+
+/* ── Design tokens (also used by Buckets.razor.css fallbacks) ─ */
+:root {
+    --bg: #f5f7fb;
+    --surface: #ffffff;
+    --surface-2: #f0f3f8;
+    --surface-3: #e6ebf3;
+    --border: #d7deea;
+    --accent: #1677ff;
+    --accent-hover: #0958d9;
+    --accent-dim: rgba(22, 119, 255, 0.12);
+    --text: #182033;
+    --text-muted: #647086;
+    --text-faint: #9aa5b6;
+    --danger: #dc2626;
+    --danger-dim: rgba(220, 38, 38, 0.10);
+    --success: #168a4a;
+    --success-dim: rgba(22, 138, 74, 0.10);
+    --radius: 8px;
+    --radius-sm: 5px;
+    --transition: 0.18s ease;
+}
+
+/* ── Minimal base (AntDesign ships its own reset) ──────────── */
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+html {
+    height: 100%;
+    -webkit-text-size-adjust: 100%;
+    overflow-x: hidden;
+}
+
+body {
+    margin: 0;
+    height: 100%;
+    overflow-x: hidden;
+    background: var(--bg);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+}
+
+/* Don't force svg/img to block — Ant Design icons are inline and break otherwise */
+img {
+    max-width: 100%;
+}
+
+/* ── Blazor error UI ────────────────────────────────────────── */
+#blazor-error-ui {
+    display: none;
+    position: fixed;
+    bottom: 1rem;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 2000;
+    max-width: min(480px, calc(100vw - 2rem));
+    padding: 0.75rem 2.25rem 0.75rem 1rem;
+    color: #fff;
+    font-size: 0.9rem;
+    background: #b32121;
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+    white-space: nowrap;
+}
+
+#blazor-error-ui.blazor-error-boundary {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+#blazor-error-ui a {
+    color: #fff;
+    text-decoration: underline;
+}
+
+#blazor-error-ui .dismiss {
+    position: absolute;
+    top: 0.45rem;
+    right: 0.65rem;
+    cursor: pointer;
+    opacity: 0.85;
+}
+
+#blazor-error-ui .dismiss:hover {
+    opacity: 1;
+}
+
+/* ── User layout (login / setup) ─────────────────────────────── */
+.apiextfs-user-layout {
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+    min-height: 100dvh;
+    overflow: auto;
+    background:
+        radial-gradient(ellipse 70% 50% at 50% 0%, rgba(22, 119, 255, 0.10), transparent 60%),
+        linear-gradient(180deg, #f7f9fc 0%, #eef2f7 100%);
+}
+
+.apiextfs-user-layout-content {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 48px 16px 32px;
+}
+
+.apiextfs-user-layout-panel {
+    width: 100%;
+    max-width: 420px;
+}
+
+.apiextfs-user-layout-top {
+    margin-bottom: 28px;
+    text-align: center;
+}
+
+.apiextfs-user-layout-header a {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    text-decoration: none;
+    color: inherit;
+}
+
+.apiextfs-user-layout-header a:hover {
+    color: inherit;
+    text-decoration: none;
+}
+
+.apiextfs-user-layout-logo {
+    display: block;
+    width: 44px;
+    height: 44px;
+    border-radius: 10px;
+    box-shadow: 0 6px 16px rgba(22, 119, 255, 0.22);
+}
+
+.apiextfs-user-layout-title {
+    color: rgba(0, 0, 0, 0.88);
+    font-weight: 700;
+    font-size: 30px;
+    letter-spacing: -0.02em;
+    line-height: 1.2;
+    font-family: Avenir, "Segoe UI", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+}
+
+.apiextfs-user-layout-desc {
+    margin-top: 10px;
+    color: rgba(0, 0, 0, 0.45);
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+.apiextfs-user-layout-footer {
+    padding: 0 16px 24px;
+    color: rgba(0, 0, 0, 0.35);
+    font-size: 12px;
+    text-align: center;
+}
+
+/* Login / setup card */
+.apiextfs-user-card {
+    width: 100%;
+    padding: 28px 28px 24px;
+    background: #fff;
+    border: 1px solid #e8edf3;
+    border-radius: 14px;
+    box-shadow:
+        0 1px 2px rgba(15, 23, 42, 0.04),
+        0 12px 32px rgba(15, 23, 42, 0.08);
+}
+
+.apiextfs-user-form-title {
+    margin: 0 0 6px;
+    color: rgba(0, 0, 0, 0.88);
+    font-size: 18px;
+    font-weight: 650;
+    line-height: 1.35;
+    text-align: left;
+}
+
+.apiextfs-user-form-desc {
+    margin: 0 0 20px;
+    color: rgba(0, 0, 0, 0.45);
+    font-size: 13px;
+    line-height: 1.55;
+    text-align: left;
+}
+
+/* ant-alert 默认 margin:0，登录区需自管上下间距 */
+.apiextfs-user-card .ant-alert,
+.apiextfs-user-alert.ant-alert {
+    margin: 0 0 20px;
+}
+
+.apiextfs-user-field {
+    margin-bottom: 18px;
+}
+
+.apiextfs-user-label {
+    display: block;
+    margin-bottom: 8px;
+    color: rgba(0, 0, 0, 0.65);
+    font-size: 13px;
+    font-weight: 500;
+}
+
+.apiextfs-user-prefix-icon {
+    color: rgba(0, 0, 0, 0.35);
+    font-size: 14px;
+}
+
+.apiextfs-user-submit {
+    width: 100%;
+    height: 42px !important;
+    margin-top: 4px;
+    font-weight: 600;
+    border-radius: 8px !important;
+    box-shadow: 0 6px 16px rgba(22, 119, 255, 0.28);
+}
+
+.apiextfs-user-other {
+    margin-top: 18px;
+    padding-top: 16px;
+    border-top: 1px solid #f0f3f7;
+    color: rgba(0, 0, 0, 0.45);
+    font-size: 12px;
+    line-height: 1.6;
+}
+
+/* Native inputs inside ant affix wrappers */
+.apiextfs-user-form .ant-input-affix-wrapper {
+    display: inline-flex;
+    align-items: center;
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    height: 42px;
+    padding: 4px 12px;
+    color: rgba(0, 0, 0, 0.88);
+    font-size: 14px;
+    line-height: 1.5714285714285714;
+    background-color: #fafbfc;
+    border: 1px solid #d9e0ea;
+    border-radius: 8px;
+    transition: all 0.2s;
+}
+
+.apiextfs-user-form .ant-input-affix-wrapper:hover {
+    border-color: #4096ff;
+    background-color: #fff;
+}
+
+.apiextfs-user-form .ant-input-affix-wrapper:focus-within {
+    border-color: #1677ff;
+    background-color: #fff;
+    box-shadow: 0 0 0 3px rgba(22, 119, 255, 0.12);
+    outline: 0;
+}
+
+.apiextfs-user-form .ant-input-prefix {
+    display: flex;
+    flex: none;
+    align-items: center;
+    margin-inline-end: 8px;
+}
+
+.apiextfs-user-form .ant-input {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    padding: 0;
+    color: inherit;
+    font-size: inherit;
+    line-height: inherit;
+    background: transparent;
+    border: none;
+    outline: none;
+}
+
+.apiextfs-user-form .ant-input::placeholder {
+    color: rgba(0, 0, 0, 0.3);
+}
+
+.apiextfs-user-form .ant-btn-primary {
+    color: #fff;
+    background: linear-gradient(180deg, #3b8bff 0%, #1677ff 100%);
+    border-color: #1677ff;
+    cursor: pointer;
+}
+
+.apiextfs-user-form .ant-btn-primary:hover {
+    color: #fff;
+    background: linear-gradient(180deg, #2f7ff5 0%, #0958d9 100%);
+    border-color: #0958d9;
+}
+
+.apiextfs-user-form .ant-btn-lg {
+    height: 42px;
+    padding: 6.4px 15px;
+    font-size: 15px;
+    border-radius: 8px;
+}
+
+.apiextfs-user-form .ant-btn-block {
+    width: 100%;
+}
+
+@media screen and (max-width: 576px) {
+    .apiextfs-user-layout-content {
+        align-items: flex-start;
+        padding: 36px 12px 24px;
+    }
+
+    .apiextfs-user-layout-title {
+        font-size: 26px;
+    }
+
+    .apiextfs-user-card {
+        padding: 22px 18px 18px;
+        border-radius: 12px;
+    }
+}
+
+/* ── ProLayout chrome (aligned with ant-design-pro-blazor) ───── */
+/* Keep shell within viewport — avoid double document scrollbars.
+   Do NOT set overflow on .ant-pro-basicLayout-content: any non-visible
+   overflow clips PageContainer's negative margin and breaks the header. */
+html,
+body,
+#app,
+.ant-design-pro,
+.ant-pro-basicLayout {
+    max-width: 100%;
+}
+
+.ant-layout {
+    min-height: 100%;
+}
+
+.ant-pro-basicLayout {
+    width: 100%;
+    min-height: 100%;
+}
+
+.ant-pro-basicLayout > .ant-layout {
+    min-width: 0;
+}
+
+.ant-pro-basicLayout-content {
+    min-width: 0;
+}
+
+/* Header action icons — same pattern as pro-blazor RightContent */
+.ant-pro-global-header .action,
+.action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    padding: 0 12px;
+    color: rgba(0, 0, 0, 0.65);
+    cursor: pointer;
+    transition: all 0.3s;
+}
+
+.ant-pro-global-header .action:hover,
+.action:hover {
+    color: rgba(0, 0, 0, 0.85);
+    background: rgba(0, 0, 0, 0.025);
+}
+
+.ant-pro-global-header .action > .anticon,
+.action > .anticon {
+    font-size: 16px;
+    vertical-align: middle;
+}
+
+.action a {
+    display: inline-flex;
+    align-items: center;
+    color: inherit;
+    text-decoration: none;
+}
+
+.action a:hover {
+    color: inherit;
+    text-decoration: none;
+}
+
+.right {
+    display: flex;
+    align-items: center;
+    height: 100%;
+    margin-left: auto;
+    overflow: hidden;
+}
+
+.right.ant-space {
+    height: 100%;
+}
+
+.right .ant-space-item {
+    display: flex;
+    align-items: center;
+    height: 100%;
+}
+
+/* Avatar dropdown in header */
+.ant-pro-global-header .ant-dropdown-trigger,
+.right .ant-dropdown-trigger {
+    display: inline-flex;
+    align-items: center;
+    height: 100%;
+    padding: 0 12px;
+    cursor: pointer;
+    transition: background 0.3s;
+}
+
+.ant-pro-global-header .ant-dropdown-trigger:hover,
+.right .ant-dropdown-trigger:hover {
+    background: rgba(0, 0, 0, 0.025);
+}
+
+.right .ant-avatar {
+    margin-right: 8px;
+    color: #fff;
+    background: #1677ff;
+    vertical-align: middle;
+}
+
+/* Header left fold button vertical align */
+.ant-pro-global-header .ant-space,
+.ant-pro-global-header .ant-space-item {
+    height: 100%;
+    align-items: center;
+}
+
+.ant-pro-global-header .ant-space-item .action.anticon,
+.ant-pro-global-header .anticon.action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    padding: 0 12px;
+    font-size: 16px;
+}
+
+/* Sider menu icon alignment */
+.ant-pro-sider .ant-menu-item .anticon,
+.ant-pro-sider .ant-menu-submenu-title .anticon {
+    min-width: 14px;
+    font-size: 14px;
+}
+
+.ant-pro-sider .ant-menu-item .anticon + span,
+.ant-pro-sider .ant-menu-submenu-title .anticon + span {
+    margin-left: 10px;
+}
+
+@media (max-width: 768px) {
+    .right .ant-dropdown-trigger > span:not(.ant-avatar),
+    .right .ant-dropdown-trigger .antd-pro-header-account-name {
+        display: none;
+    }
+
+    .right .ant-avatar {
+        margin-right: 0;
+    }
+
+    .action {
+        padding: 0 8px;
+    }
+}
+
+/* ── Page body wrapper inside ProLayout content ──────────────── */
+.apiextfs-page-body {
+    min-width: 0;
+    min-height: 0;
+}
+
+/* ── Shared helpers ──────────────────────────────────────────── */
+.apiextfs-mb-1 { margin-bottom: 8px !important; }
+.apiextfs-mb-2 { margin-bottom: 16px !important; }
+.apiextfs-mb-3 { margin-bottom: 24px !important; }
+.apiextfs-mt-1 { margin-top: 8px !important; }
+.apiextfs-mt-2 { margin-top: 16px !important; }
+.apiextfs-mt-3 { margin-top: 24px !important; }
+
+/* Vertical stack for page sections (cards / alerts) */
+.apiextfs-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    width: 100%;
+}
+
+.apiextfs-stack > * {
+    width: 100%;
+    min-width: 0;
+}
+
+/* Ensure Space-stacked page sections stretch full width */
+.apiextfs-page-body .ant-space-vertical {
+    width: 100%;
+}
+
+.apiextfs-page-body .ant-space-vertical > .ant-space-item {
+    width: 100%;
+}
+
+.apiextfs-break-all {
+    overflow-wrap: anywhere;
+}
+
+.apiextfs-result-center {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: calc(100vh - 120px);
+    padding: 24px;
+}
+
+.apiextfs-modal-form {
+    display: grid;
+    gap: 12px;
+}
+
+.apiextfs-form-item {
+    display: grid;
+    gap: 6px;
+}
+
+.apiextfs-field-block {
+    display: grid;
+    gap: 8px;
+}
+
+.apiextfs-field-label {
+    color: rgba(0, 0, 0, 0.85);
+    font-size: 14px;
+    font-weight: 500;
+}
+
+/* ── Operational console refinements ──────────────────────────── */
+body,
+.ant-layout,
+.ant-btn,
+.ant-input,
+.ant-table {
+    font-family: "Segoe UI Variable", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+    letter-spacing: 0;
+}
+
+/* Let ProLayout defaults drive page-header / page-container rhythm.
+   Only keep overflow guards that do not clip negative margins. */
+.ant-pro-basicLayout-content {
+    min-width: 0;
+}
+
+.ant-pro-page-container-children-content {
+    min-width: 0;
+}
+
+.ant-pro-grid-content,
+.ant-pro-grid-content-children,
+.apiextfs-page-body {
+    min-width: 0;
+    max-width: 100%;
+}
+
+.ant-card,
+.ant-table-container,
+.ant-modal-content,
+.ant-alert {
+    border-radius: 6px;
+}
+
+.ant-card {
+    border-color: #e4e8ed;
+    box-shadow: none;
+}
+
+.ant-table-container {
+    overflow: hidden;
+    border: 1px solid #e4e8ed;
+    background: #fff;
+}
+
+.ant-table-thead > tr > th {
+    color: #52606d;
+    font-size: 12px;
+    font-weight: 600;
+    background: #f7f9fb;
+    border-bottom-color: #e4e8ed;
+}
+
+.ant-table-tbody > tr > td {
+    border-bottom-color: #edf0f3;
+}
+
+.ant-table-tbody > tr:hover > td {
+    background: #f5f9ff;
+}
+
+/* Hidden Blazor InputFile used by upload modal (global fallback) */
+.apiextfs-upload-input-host,
+#apiextfs-upload-input,
+input.upload-file-input-hidden {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    margin: -1px !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+    clip: rect(0, 0, 0, 0) !important;
+    white-space: nowrap !important;
+    border: 0 !important;
+    opacity: 0 !important;
+}
+
+/* ── Explorer list panel (Buckets page) ─────────────────────── */
+.apiextfs-explorer-card {
+    overflow: hidden;
+    border-color: #e4e8ed !important;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.apiextfs-explorer-card > .ant-card-body {
+    padding: 0 !important;
+}
+
+.apiextfs-bucket-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-height: 56px;
+    padding: 12px 16px;
+    border-bottom: 1px solid #edf0f3;
+    background: #fff;
+}
+
+.apiextfs-bucket-toolbar > .ant-space:last-child {
+    justify-content: flex-end;
+}
+
+.apiextfs-item-count {
+    white-space: nowrap;
+}
+
+.apiextfs-explorer-body {
+    min-height: 360px;
+    background: #fff;
+}
+
+.apiextfs-explorer-alert {
+    margin: 16px;
+}
+
+.apiextfs-explorer-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 360px;
+    padding: 48px 24px;
+    background:
+        radial-gradient(ellipse 70% 60% at 50% 30%, rgba(22, 119, 255, 0.05), transparent 70%),
+        #fff;
+}
+
+.apiextfs-explorer-empty-hint {
+    margin: 0 0 16px;
+    color: rgba(0, 0, 0, 0.45);
+    font-size: 13px;
+}
+
+.apiextfs-explorer-table .ant-table {
+    background: transparent;
+}
+
+.apiextfs-explorer-table .ant-table-container {
+    border: none !important;
+    border-radius: 0 !important;
+}
+
+.apiextfs-explorer-table .ant-table-thead > tr > th {
+    background: #fafbfc !important;
+}
+
+.apiextfs-explorer-table .ant-table-tbody > tr {
+    cursor: pointer;
+}
+
+.apiextfs-explorer-table .ant-table-tbody > tr.apiextfs-row-active > td {
+    background: #e6f4ff !important;
+}
+
+.apiextfs-explorer-table .ant-table-tbody > tr > td {
+    padding-top: 10px;
+    padding-bottom: 10px;
+}
+
+.apiextfs-item-name {
+    color: rgba(0, 0, 0, 0.85);
+    font-weight: 500;
+}
+
+.apiextfs-item-name:hover {
+    color: #1677ff;
+}
+
+.apiextfs-item-meta {
+    color: rgba(0, 0, 0, 0.45);
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+}
+
+.apiextfs-row-actions .ant-btn {
+    opacity: 0.72;
+}
+
+.apiextfs-explorer-table .ant-table-tbody > tr:hover .apiextfs-row-actions .ant-btn {
+    opacity: 1;
+}
+
+.apiextfs-item-icon,
+.apiextfs-detail-icon {
+    display: inline-grid;
+    place-items: center;
+    color: #52606d;
+}
+
+.apiextfs-item-icon {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    background: #f0f3f6;
+    font-size: 15px;
+}
+
+.apiextfs-detail-icon {
+    width: 52px;
+    height: 52px;
+    margin-bottom: 16px;
+    border-radius: 6px;
+    background: #edf5ff;
+    font-size: 25px;
+}
+
+.item-icon-bucket { color: #245aa5; background: #eaf2fc; }
+.item-icon-folder { color: #8a5a00; background: #fff4d6; }
+.item-icon-image { color: #147d64; background: #e5f7f1; }
+.item-icon-media { color: #7b4fb3; background: #f2eafa; }
+.item-icon-pdf { color: #b42318; background: #feeceb; }
+
+.apiextfs-modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 20px;
+}
+
+.upload-file-icon {
+    color: #52606d;
+}
+
+.status-done { color: #168a4a !important; }
+.status-skip { color: #7a8695 !important; }
+.status-error { color: #cf1322 !important; }
+
+@media (max-width: 768px) {
+    .right .action {
+        padding: 0 8px;
+    }
+
+    .apiextfs-bucket-toolbar {
+        align-items: stretch;
+        flex-direction: column;
+        padding: 12px;
+    }
+
+    .apiextfs-bucket-toolbar > .ant-space {
+        width: 100%;
+    }
+
+    .apiextfs-explorer-empty {
+        min-height: 280px;
+        padding: 32px 16px;
+    }
+
+    .apiextfs-bucket-toolbar .ant-input-search {
+        width: 100% !important;
+    }
+
+    .ant-table-content {
+        overflow-x: auto;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        scroll-behavior: auto !important;
+        transition-duration: 0.01ms !important;
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+    }
+}

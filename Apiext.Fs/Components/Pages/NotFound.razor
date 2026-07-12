@@ -1,0 +1,14 @@
+@page "/not-found"
+@layout MainLayout
+
+<PageTitle>未找到 — Apiext.Fs</PageTitle>
+
+<div class="apiextfs-result-center">
+    <Result Status="@ResultStatus.Http404"
+            Title="404"
+            SubTitle="抱歉，你访问的内容不存在。">
+        <Extra>
+            <Button Type="@ButtonType.Primary" Href="/_apiextfs/buckets">返回首页</Button>
+        </Extra>
+    </Result>
+</div>

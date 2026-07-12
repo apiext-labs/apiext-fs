@@ -1,0 +1,214 @@
+@inherits LayoutComponentBase
+@implements IDisposable
+@inject NavigationManager Nav
+@inject IS3BucketService BucketService
+@inject IAuthorizationProvider Authz
+@using System.Security.Claims
+@using Microsoft.AspNetCore.Components.Authorization
+@using Apiext.Fs.Models.Api.Buckets
+@using AntDesign.ProLayout
+
+<BasicLayout MenuData="_menuData"
+             Logo="@("/_assets/logo.svg")"
+             MenuAccordion
+             OpenKeys="_openMenuKeys"
+             @bind-Collapsed="_collapsed">
+    <HeaderContentRender>
+        <Space Size="@("24")">
+            <SpaceItem>
+                <Icon Class="action"
+                      Type="@(_collapsed ? "menu-unfold" : "menu-fold")"
+                      OnClick="ToggleCollapsed" />
+            </SpaceItem>
+        </Space>
+    </HeaderContentRender>
+    <RightContentRender>
+        <RightContent OnCreateBucket="OpenAddBucket" />
+    </RightContentRender>
+    <ChildContent>
+        <div class="apiextfs-page-body">
+            @Body
+        </div>
+    </ChildContent>
+    <FooterRender>
+        <FooterView Copyright="@($"{DateTime.Now.Year} Apiext.Fs")" Links="_footerLinks" />
+    </FooterRender>
+</BasicLayout>
+
+@* ProLayout floating theme/layout panel (right edge gear). Dev-oriented; keep for flexible config. *@
+<SettingDrawer />
+
+<div id="blazor-error-ui" data-nosnippet>
+    发生了未处理的错误。
+    <a href="." class="reload">重新加载</a>
+    <span class="dismiss">🗙</span>
+</div>
+
+<Modal Title="新建 Bucket"
+       Visible="_showAddBucket"
+       OnOk="CreateBucketAsync"
+       OnCancel="CloseAddBucket"
+       OkText="@("创建")"
+       CancelText="@("取消")"
+       ConfirmLoading="_creatingBucket">
+    @if (_bucketError is not null)
+    {
+        <Alert Type="@AlertType.Error" Message="@_bucketError" ShowIcon="true" Class="apiextfs-mb-2" />
+    }
+    <Input @bind-Value="_bucketName" Placeholder="my-bucket" OnPressEnter="CreateBucketAsync" />
+</Modal>
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthState { get; set; }
+
+    private bool _collapsed;
+    private string _currentPath = string.Empty;
+    private bool _isSuperAdmin;
+    private string _userId = string.Empty;
+    private string _username = string.Empty;
+    private readonly string[] _openMenuKeys = ["buckets"];
+    private MenuDataItem[] _menuData = [];
+
+    private readonly LinkItem[] _footerLinks =
+    [
+        new LinkItem { Key = "apiextfs", Title = "Apiext.Fs", Href = "/_apiextfs/buckets", BlankTarget = false }
+    ];
+
+    // Add-bucket modal state
+    private bool _showAddBucket;
+    private bool _creatingBucket;
+    private string _bucketName = string.Empty;
+    private string? _bucketError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _currentPath = new Uri(Nav.Uri).AbsolutePath;
+        Nav.LocationChanged += OnLocationChanged;
+
+        if (AuthState is not null)
+        {
+            var state = await AuthState;
+            _userId = state.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? string.Empty;
+            _username = state.User.FindFirstValue(ClaimTypes.Name) ?? _userId;
+            _isSuperAdmin = state.User.FindFirstValue("is_super_admin") == "true";
+        }
+
+        await BuildMenuAsync();
+    }
+
+    private void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
+    {
+        _currentPath = new Uri(e.Location).AbsolutePath;
+        InvokeAsync(StateHasChanged);
+    }
+
+    private async Task BuildMenuAsync()
+    {
+        var identity = new CallerIdentity { UserId = _userId, Username = _username, IsSuperAdmin = _isSuperAdmin };
+        var response = await BucketService.ListBucketsAsync(identity.UserId);
+
+        var bucketChildren = new List<MenuDataItem>();
+        foreach (var bucket in response.Buckets.OrderBy(b => b.Name, StringComparer.OrdinalIgnoreCase))
+        {
+            if (!identity.IsSuperAdmin)
+            {
+                var access = await Authz.CheckAccessAsync(identity, bucket.Name, BucketPermission.Read);
+                if (access != AclCheckResult.Allowed)
+                    continue;
+            }
+
+            bucketChildren.Add(new MenuDataItem
+            {
+                Path = $"/_apiextfs/buckets/{bucket.Name}",
+                Name = bucket.Name,
+                Key = $"bucket-{bucket.Name}",
+                Icon = "folder"
+            });
+        }
+
+        // ProLayout submenu parents with Children only expand/collapse and do not navigate.
+        // Keep a dedicated leaf item so /_apiextfs/buckets remains reachable.
+        var menu = new List<MenuDataItem>();
+        if (bucketChildren.Count == 0)
+        {
+            menu.Add(new MenuDataItem
+            {
+                Path = "/_apiextfs/buckets",
+                Name = "Buckets",
+                Key = "buckets",
+                Icon = "cloud-server"
+            });
+        }
+        else
+        {
+            bucketChildren.Insert(0, new MenuDataItem
+            {
+                Path = "/_apiextfs/buckets",
+                Name = "全部 Buckets",
+                Key = "buckets-all",
+                Icon = "appstore"
+            });
+
+            menu.Add(new MenuDataItem
+            {
+                Name = "Buckets",
+                Key = "buckets",
+                Icon = "cloud-server",
+                Children = bucketChildren.ToArray()
+            });
+        }
+
+        if (_isSuperAdmin)
+        {
+            menu.Add(new MenuDataItem { Path = "/_apiextfs/users", Name = "用户", Key = "users", Icon = "team" });
+            menu.Add(new MenuDataItem { Path = "/_apiextfs/jobs", Name = "任务", Key = "jobs", Icon = "history" });
+        }
+        menu.Add(new MenuDataItem { Path = "/_apiextfs/credentials", Name = "API 密钥", Key = "credentials", Icon = "api" });
+        menu.Add(new MenuDataItem { Path = "/_apiextfs/profile", Name = "个人资料", Key = "profile", Icon = "user" });
+
+        _menuData = menu.ToArray();
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void ToggleCollapsed() => _collapsed = !_collapsed;
+
+    private void OpenAddBucket()
+    {
+        _bucketName = string.Empty;
+        _bucketError = null;
+        _showAddBucket = true;
+    }
+
+    private void CloseAddBucket() => _showAddBucket = false;
+
+    private async Task CreateBucketAsync()
+    {
+        _bucketError = null;
+        var name = _bucketName.Trim();
+        if (string.IsNullOrEmpty(name))
+        {
+            _bucketError = "Bucket 名称不能为空。";
+            return;
+        }
+
+        _creatingBucket = true;
+        try
+        {
+            await BucketService.CreateBucketAsync(name, region: null, ownerId: "admin");
+            _showAddBucket = false;
+            await BuildMenuAsync();
+            Nav.NavigateTo("/_apiextfs/buckets", forceLoad: false);
+        }
+        catch (Exception ex)
+        {
+            _bucketError = ex.Message;
+        }
+        finally
+        {
+            _creatingBucket = false;
+        }
+    }
+
+    public void Dispose() => Nav.LocationChanged -= OnLocationChanged;
+}

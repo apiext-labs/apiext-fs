@@ -1,0 +1,235 @@
+@page "/_apiextfs/users/{UserId:guid}"
+@layout AppLayout
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@using System.Security.Claims
+@using AntDesign.ProLayout
+@inject IUserManagementService UserMgmt
+@inject IS3BucketService Buckets
+@inject NavigationManager Nav
+@inject MessageService Message
+
+<PageTitle>编辑用户 — Apiext.Fs</PageTitle>
+
+@if (!_isSuperAdmin)
+{
+    <PageContainer Title="编辑用户">
+        <Result Status="@ResultStatus.Http403" Title="403" SubTitle="你没有管理用户的权限。" />
+    </PageContainer>
+}
+else if (_notFound)
+{
+    <PageContainer Title="编辑用户">
+        <Result Status="@ResultStatus.Http404" Title="404" SubTitle="用户不存在。">
+            <Extra>
+                <Button Type="@ButtonType.Primary" OnClick="GoBack">返回用户列表</Button>
+            </Extra>
+        </Result>
+    </PageContainer>
+}
+else if (_user is null)
+{
+    <PageContainer Title="编辑用户">
+        <Card>
+            <Skeleton Active />
+        </Card>
+    </PageContainer>
+}
+else
+{
+    <PageContainer Title="@($"编辑用户：{_user.Username}")" OnBack="GoBack">
+        <ChildContent>
+            <Card Title="身份信息" Class="apiextfs-mb-2">
+                <Form Model="_identityModel" LabelColSpan="4" WrapperColSpan="12">
+                    <FormItem Label="用户名">
+                        <Input @bind-Value="context.Username" />
+                    </FormItem>
+                    <FormItem Label="超级管理员">
+                        <Switch @bind-Value="context.IsSuperAdmin"
+                                Disabled="@(_user.Id.ToString() == _currentUserId)" />
+                    </FormItem>
+                    <FormItem WrapperColOffset="4" WrapperColSpan="12">
+                        <Button Type="@ButtonType.Primary" OnClick="SaveIdentityAsync" Loading="_savingIdentity">保存身份信息</Button>
+                    </FormItem>
+                </Form>
+            </Card>
+
+            <Card Title="修改密码" Class="apiextfs-mb-2">
+                <Form Model="_passwordModel" LabelColSpan="4" WrapperColSpan="12">
+                    <FormItem Label="新密码">
+                        <InputPassword @bind-Value="context.NewPassword" />
+                    </FormItem>
+                    <FormItem Label="确认密码">
+                        <InputPassword @bind-Value="context.ConfirmPassword" />
+                    </FormItem>
+                    <FormItem WrapperColOffset="4" WrapperColSpan="12">
+                        <Button Type="@ButtonType.Primary" OnClick="SavePasswordAsync" Loading="_savingPassword">设置密码</Button>
+                    </FormItem>
+                </Form>
+            </Card>
+
+            @if (!_identityModel.IsSuperAdmin)
+            {
+                <Card Title="权限控制">
+                    <Table TItem="AclRowDto" DataSource="_aclRows" PageSize="100" HidePagination Bordered>
+                        <Column TData="string" Title="范围">
+                            @if (context.BucketName is null)
+                            {
+                                <AntDesign.Text Strong><Icon Type="global" /> 全局（所有 Bucket）</AntDesign.Text>
+                            }
+                            else
+                            {
+                                <AntDesign.Text><Icon Type="database" /> @context.BucketName</AntDesign.Text>
+                            }
+                        </Column>
+                        <Column TData="bool" Title="全部" Align="ColumnAlign.Center">
+                            <Checkbox Checked="context.All" CheckedChanged="v => ToggleAll(context, v)" />
+                        </Column>
+                        <Column TData="bool" Title="读取" Align="ColumnAlign.Center">
+                            <Checkbox Checked="context.CanRead" CheckedChanged="value => context.CanRead = value" />
+                        </Column>
+                        <Column TData="bool" Title="新增" Align="ColumnAlign.Center">
+                            <Checkbox Checked="context.CanAdd" CheckedChanged="value => context.CanAdd = value" />
+                        </Column>
+                        <Column TData="bool" Title="更新" Align="ColumnAlign.Center">
+                            <Checkbox Checked="context.CanUpdate" CheckedChanged="value => context.CanUpdate = value" />
+                        </Column>
+                        <Column TData="bool" Title="删除" Align="ColumnAlign.Center">
+                            <Checkbox Checked="context.CanDelete" CheckedChanged="value => context.CanDelete = value" />
+                        </Column>
+                    </Table>
+                    <div class="apiextfs-mt-2">
+                        <Button Type="@ButtonType.Primary" OnClick="SaveAclAsync" Loading="_savingAcl">保存权限</Button>
+                    </div>
+                </Card>
+            }
+            else
+            {
+                <Alert Type="@AlertType.Info" ShowIcon="true"
+                       Message="超级管理员不受 ACL 规则约束，拥有对所有资源的完全访问权限。" />
+            }
+        </ChildContent>
+    </PageContainer>
+}
+
+@code {
+    [Parameter] public Guid UserId { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthState { get; set; }
+
+    private UserDto? _user;
+    private bool _notFound;
+    private bool _isSuperAdmin;   // current logged-in user
+    private string? _currentUserId;
+
+    private readonly IdentityModel _identityModel = new();
+    private readonly PasswordModel _passwordModel = new();
+    private List<AclRowDto> _aclRows = [];
+
+    private bool _savingIdentity;
+    private bool _savingPassword;
+    private bool _savingAcl;
+
+    [Inject] private Microsoft.EntityFrameworkCore.IDbContextFactory<Apiext.Fs.Data.AppDbContext> DbFactory { get; set; } = null!;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthState is not null)
+        {
+            var s = await AuthState;
+            _currentUserId = s.User.FindFirstValue(ClaimTypes.NameIdentifier);
+            _isSuperAdmin  = s.User.FindFirstValue("is_super_admin") == "true";
+        }
+
+        if (!_isSuperAdmin) return;
+
+        _user = await UserMgmt.GetByIdAsync(UserId);
+        if (_user is null) { _notFound = true; return; }
+
+        _identityModel.Username     = _user.Username;
+        _identityModel.IsSuperAdmin = _user.IsSuperAdmin;
+
+        var bucketsResp = await Buckets.ListBucketsAsync("admin");
+        var bucketNames = bucketsResp.Buckets.Select(b => b.Name);
+        _aclRows = await UserMgmt.GetAclRowsAsync(UserId, bucketNames);
+    }
+
+    private void GoBack() => Nav.NavigateTo("/_apiextfs/users");
+
+    private async Task SaveIdentityAsync()
+    {
+        _savingIdentity = true;
+        try
+        {
+            var (ok1, err1) = await UserMgmt.UpdateUsernameAsync(UserId, _identityModel.Username);
+            if (!ok1) { Message.Error(err1!); return; }
+
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var entity = await db.Users.FindAsync(UserId);
+            if (entity is not null)
+            {
+                entity.IsSuperAdmin = _identityModel.IsSuperAdmin;
+                await db.SaveChangesAsync();
+            }
+
+            _user = await UserMgmt.GetByIdAsync(UserId);
+            Message.Success("身份信息已保存。");
+        }
+        finally
+        {
+            _savingIdentity = false;
+        }
+    }
+
+    private async Task SavePasswordAsync()
+    {
+        if (_passwordModel.NewPassword != _passwordModel.ConfirmPassword)
+        {
+            Message.Error("两次输入的密码不一致。");
+            return;
+        }
+
+        _savingPassword = true;
+        try
+        {
+            var (ok, error) = await UserMgmt.UpdatePasswordAsync(UserId, _passwordModel.NewPassword);
+            if (ok)
+            {
+                _passwordModel.NewPassword = _passwordModel.ConfirmPassword = string.Empty;
+                Message.Success("密码已更新。");
+            }
+            else Message.Error(error!);
+        }
+        finally
+        {
+            _savingPassword = false;
+        }
+    }
+
+    private async Task SaveAclAsync()
+    {
+        _savingAcl = true;
+        try
+        {
+            var (ok, error) = await UserMgmt.SaveAclRowsAsync(UserId, _aclRows);
+            if (ok) Message.Success("权限已保存。");
+            else Message.Error(error!);
+        }
+        finally
+        {
+            _savingAcl = false;
+        }
+    }
+
+    private static void ToggleAll(AclRowDto row, bool value) => row.All = value;
+
+    private sealed class IdentityModel
+    {
+        public string Username { get; set; } = string.Empty;
+        public bool IsSuperAdmin { get; set; }
+    }
+
+    private sealed class PasswordModel
+    {
+        public string NewPassword { get; set; } = string.Empty;
+        public string ConfirmPassword { get; set; } = string.Empty;
+    }
+}

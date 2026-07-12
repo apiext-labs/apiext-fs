@@ -1,0 +1,76 @@
+@using System.Security.Claims
+@using Microsoft.AspNetCore.Components.Authorization
+@inject NavigationManager Nav
+
+<Space Class="right" Size="@("8")">
+    @if (_isSuperAdmin)
+    {
+        <SpaceItem>
+            <Tooltip Title="@("新建 Bucket")" Placement="@Placement.Bottom">
+                <Unbound>
+                    <span @ref="@context.Current" class="action" @onclick="CreateBucket">
+                        <Icon Type="plus" Theme="IconThemeType.Outline" />
+                    </span>
+                </Unbound>
+            </Tooltip>
+        </SpaceItem>
+    }
+    <SpaceItem>
+        <Tooltip Title="@("API 密钥")" Placement="@Placement.Bottom">
+            <Unbound>
+                <a @ref="@context.Current" class="action" href="/_apiextfs/credentials">
+                    <Icon Type="api" Theme="IconThemeType.Outline" />
+                </a>
+            </Unbound>
+        </Tooltip>
+    </SpaceItem>
+    <SpaceItem>
+        <AvatarDropdown Name="@_displayName"
+                        MenuItems="@_avatarMenuItems"
+                        OnItemSelected="HandleSelectUser" />
+    </SpaceItem>
+</Space>
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthState { get; set; }
+    [Parameter] public EventCallback OnCreateBucket { get; set; }
+
+    private string _username = "用户";
+    private string _displayName = "用户";
+    private bool _isSuperAdmin;
+
+    private readonly AvatarMenuItem[] _avatarMenuItems =
+    [
+        new() { Key = "profile", IconType = "user", Option = "个人资料" },
+        new() { Key = "credentials", IconType = "api", Option = "API 密钥" },
+        new() { IsDivider = true },
+        new() { Key = "logout", IconType = "logout", Option = "退出登录" }
+    ];
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthState is null) return;
+        var state = await AuthState;
+        _username = state.User.FindFirstValue(ClaimTypes.Name) ?? "用户";
+        _isSuperAdmin = state.User.FindFirstValue("is_super_admin") == "true";
+        _displayName = _isSuperAdmin ? $"{_username} · 管理员" : _username;
+    }
+
+    private Task CreateBucket() => OnCreateBucket.InvokeAsync();
+
+    private void HandleSelectUser(MenuItem item)
+    {
+        switch (item.Key)
+        {
+            case "profile":
+                Nav.NavigateTo("/_apiextfs/profile");
+                break;
+            case "credentials":
+                Nav.NavigateTo("/_apiextfs/credentials");
+                break;
+            case "logout":
+                Nav.NavigateTo("/_apiextfs/auth/logout", forceLoad: true);
+                break;
+        }
+    }
+}

@@ -1,0 +1,126 @@
+@page "/_apiextfs/profile"
+@layout AppLayout
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@using System.Security.Claims
+@inject IUserManagementService UserMgmt
+@inject MessageService Message
+
+<PageTitle>个人资料 — Apiext.Fs</PageTitle>
+
+<PageContainer Title="个人资料">
+    <Content>
+        <AntDesign.Text Type="@TextElementType.Secondary">管理你的账号设置。</AntDesign.Text>
+    </Content>
+    <ChildContent>
+        @if (_isStatic)
+        {
+            <div class="apiextfs-stack">
+                <Card Title="账号">
+                    <Descriptions Column="1" Bordered Size="@DescriptionsSize.Middle">
+                        <DescriptionsItem Title="Username">@_username</DescriptionsItem>
+                        <DescriptionsItem Title="角色">
+                            <Tag Color="@PresetColor.Gold.ToString()">超级管理员</Tag>
+                        </DescriptionsItem>
+                    </Descriptions>
+                </Card>
+
+                <Alert Type="@AlertType.Info" ShowIcon="true">
+                    <MessageTemplate>
+                        这是在 <Text Code>appsettings.json</Text> 中配置的静态账号。修改用户名、密码或禁用该账号，
+                        请更新 <Text Code>StaticUser</Text>、<Text Code>StaticPassword</Text>，
+                        或将 <Text Code>UseStaticAccount</Text> 设为 <Text Code>false</Text>。
+                    </MessageTemplate>
+                </Alert>
+            </div>
+        }
+        else if (_userId.HasValue)
+        {
+            <div class="apiextfs-stack">
+                <Card Title="账号">
+                    <Descriptions Column="1" Bordered Size="@DescriptionsSize.Middle">
+                        <DescriptionsItem Title="Username">@_username</DescriptionsItem>
+                    </Descriptions>
+                </Card>
+
+                <Card Title="修改密码">
+                    <Form Model="_model" Layout="@FormLayout.Vertical" OnFinish="SavePasswordAsync">
+                        <Row Gutter="16">
+                            <AntDesign.Col Span="12">
+                                <FormItem Label="新密码">
+                                    <InputPassword @bind-Value="context.NewPassword" />
+                                </FormItem>
+                            </AntDesign.Col>
+                            <AntDesign.Col Span="12">
+                                <FormItem Label="确认密码">
+                                    <InputPassword @bind-Value="context.ConfirmPassword" />
+                                </FormItem>
+                            </AntDesign.Col>
+                        </Row>
+                        <FormItem>
+                            <Button Type="@ButtonType.Primary" HtmlType="submit" Loading="_saving">更新密码</Button>
+                        </FormItem>
+                    </Form>
+                </Card>
+            </div>
+        }
+    </ChildContent>
+</PageContainer>
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthState { get; set; }
+
+    private bool _isStatic;
+    private Guid? _userId;
+    private string _username = string.Empty;
+    private bool _saving;
+
+    private readonly PasswordModel _model = new();
+
+    private sealed class PasswordModel
+    {
+        public string NewPassword { get; set; } = string.Empty;
+        public string ConfirmPassword { get; set; } = string.Empty;
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthState is null) return;
+        var state = await AuthState;
+        var idClaim = state.User.FindFirstValue(ClaimTypes.NameIdentifier);
+        _username = state.User.FindFirstValue(ClaimTypes.Name) ?? string.Empty;
+
+        _isStatic = idClaim == "static-admin";
+
+        if (!_isStatic && Guid.TryParse(idClaim, out var guid))
+            _userId = guid;
+    }
+
+    private async Task SavePasswordAsync()
+    {
+        if (!_userId.HasValue) return;
+        if (_model.NewPassword != _model.ConfirmPassword)
+        {
+            Message.Error("两次输入的密码不一致。");
+            return;
+        }
+
+        _saving = true;
+        try
+        {
+            var (ok, error) = await UserMgmt.UpdatePasswordAsync(_userId.Value, _model.NewPassword);
+            if (ok)
+            {
+                _model.NewPassword = _model.ConfirmPassword = string.Empty;
+                Message.Success("密码已更新。");
+            }
+            else
+            {
+                Message.Error(error!);
+            }
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+}

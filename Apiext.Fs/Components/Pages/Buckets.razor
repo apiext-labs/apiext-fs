@@ -1,0 +1,1601 @@
+@page "/_apiextfs/buckets"
+@page "/_apiextfs/buckets/{BucketName}"
+@page "/_apiextfs/buckets/{BucketName}/{**Prefix}"
+@layout AppLayout
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@using System.Security.Claims
+@using Apiext.Fs.Models.Api.Buckets
+@using Apiext.Fs.Models.Entities
+@using Apiext.Fs.Services.BackgroundJobs
+@using Microsoft.AspNetCore.Components.Forms
+@inject IS3BucketService BucketSvc
+@inject IS3ObjectService ObjectSvc
+@inject IAuthorizationProvider Authz
+@inject IBucketPolicyService BucketPolicies
+@inject IPresignedUrlService Presigned
+@inject IBackgroundJobQueue JobQueue
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@inject MessageService Message
+@using AntDesign.ProLayout
+@implements IAsyncDisposable
+
+<PageTitle>@(BucketName is null ? "Buckets" : BucketName) — Apiext.Fs</PageTitle>
+
+<PageContainer Title="@(BucketName ?? "Buckets")">
+    <Breadcrumb>
+        @if (BucketName is not null)
+        {
+            @* Outer <Breadcrumb> is PageContainer's render fragment slot;
+               inner <Breadcrumb> is the actual AntDesign component. *@
+            <Breadcrumb>
+                <BreadcrumbItem Href="/_apiextfs/buckets">
+                    <Icon Type="cloud-server" /> Buckets
+                </BreadcrumbItem>
+                <BreadcrumbItem Href="@($"/_apiextfs/buckets/{BucketName}")">@BucketName</BreadcrumbItem>
+                @foreach (var (seg, href) in _breadcrumbs)
+                {
+                    <BreadcrumbItem Href="@href">@seg</BreadcrumbItem>
+                }
+            </Breadcrumb>
+        }
+    </Breadcrumb>
+    <Content>
+        @if (BucketName is null)
+        {
+            <AntDesign.Text Type="@TextElementType.Secondary">管理存储 Bucket，打开后可浏览对象。</AntDesign.Text>
+        }
+        else if (string.IsNullOrEmpty(CurrentPrefix))
+        {
+            <AntDesign.Text Type="@TextElementType.Secondary">@_visibleItems.Count 个项目位于当前 Bucket。</AntDesign.Text>
+        }
+        else
+        {
+            <AntDesign.Text Type="@TextElementType.Secondary">@_visibleItems.Count 个项目位于 @CurrentPrefix 下</AntDesign.Text>
+        }
+    </Content>
+    <ChildContent>
+
+<div class="page-drop-zone">
+
+<div @ref="_pageDropOverlayRef" class="page-drop-overlay">⬆ 拖放文件以上传</div>
+
+<Card Class="apiextfs-explorer-card" BodyStyle="padding:0">
+    <!-- ── Toolbar ───────────────────────────────────────────────────── -->
+    <div class="apiextfs-bucket-toolbar">
+        <Space Wrap>
+            <SpaceItem>
+                <Search Placeholder="搜索文件或文件夹…" @bind-Value="_search" Style="width:260px" AllowClear />
+            </SpaceItem>
+            <SpaceItem>
+                <AntDesign.Text Type="@TextElementType.Secondary" Class="apiextfs-item-count">
+                    @_visibleItems.Count 个项目
+                    @if (_selectedKeys.Count > 0)
+                    {
+                        <span> · 已选 @_selectedKeys.Count</span>
+                    }
+                </AntDesign.Text>
+            </SpaceItem>
+        </Space>
+        <Space Wrap>
+            @if (BucketName is not null && _isSuperAdmin && _currentBucketPolicy is not null)
+            {
+                <SpaceItem>
+                    <Button Icon="setting" OnClick="() => OpenBucketSettings(BucketName!, _currentBucketPolicy.AccessPolicy)">设置</Button>
+                </SpaceItem>
+            }
+            @if (BucketName is null && _isSuperAdmin)
+            {
+                <SpaceItem>
+                    <Button Type="@ButtonType.Primary" Icon="plus" OnClick="OpenAddBucket">新建 Bucket</Button>
+                </SpaceItem>
+            }
+            @if (BucketName is not null && _canAdd)
+            {
+                <SpaceItem>
+                    <Button Icon="folder-add" OnClick="OpenCreateFolder">新建文件夹</Button>
+                </SpaceItem>
+                <SpaceItem>
+                    <Button Type="@ButtonType.Primary" Icon="upload" OnClick="OpenUpload">上传</Button>
+                </SpaceItem>
+            }
+            @if (_selectedKeys.Count > 0)
+            {
+                <SpaceItem>
+                    <Button Icon="file-zip" OnClick="DownloadZipAsync">下载 Zip（@_selectedKeys.Count）</Button>
+                </SpaceItem>
+                @if (BucketName is not null)
+                {
+                    <SpaceItem>
+                        <Button Danger Icon="delete" OnClick="RequestDeleteSelected">删除（@_selectedKeys.Count）</Button>
+                    </SpaceItem>
+                }
+            }
+        </Space>
+    </div>
+
+    <!-- ── List ──────────────────────────────────────────────────────── -->
+    <div class="apiextfs-explorer-body">
+        @if (_error is not null)
+        {
+            <Alert Type="@AlertType.Error" Message="@_error" ShowIcon="true" Class="apiextfs-explorer-alert" />
+        }
+        else if (!_loading && _visibleItems.Count == 0)
+        {
+            <div class="apiextfs-explorer-empty">
+                <Empty Description="@EmptyDescription()">
+                    <ChildContent>
+                        @if (string.IsNullOrEmpty(_search))
+                        {
+                            @if (BucketName is not null && _canAdd)
+                            {
+                                <div class="apiextfs-explorer-empty-hint">
+                                    也可直接把文件拖到此页面上传
+                                </div>
+                            }
+                            <Space>
+                                @if (BucketName is null && _isSuperAdmin)
+                                {
+                                    <SpaceItem>
+                                        <Button Type="@ButtonType.Primary" Icon="plus" OnClick="OpenAddBucket">新建 Bucket</Button>
+                                    </SpaceItem>
+                                }
+                                @if (BucketName is not null && _canAdd)
+                                {
+                                    <SpaceItem>
+                                        <Button Icon="folder-add" OnClick="OpenCreateFolder">新建文件夹</Button>
+                                    </SpaceItem>
+                                    <SpaceItem>
+                                        <Button Type="@ButtonType.Primary" Icon="upload" OnClick="OpenUpload">上传文件</Button>
+                                    </SpaceItem>
+                                }
+                            </Space>
+                        }
+                    </ChildContent>
+                </Empty>
+            </div>
+        }
+        else
+        {
+            <Table TItem="ExplorerItem"
+                   DataSource="_visibleItems"
+                   Loading="_loading"
+                   HidePagination
+                   Size="@TableSize.Middle"
+                   OnRowClick="OnRowClick"
+                   OnRow="GetRowAttributes"
+                   RowClassName="GetRowClassName"
+                   Class="apiextfs-explorer-table"
+                   Responsive>
+                <Column TData="bool" Width="48" Align="ColumnAlign.Center">
+                    <TitleTemplate>
+                        <Checkbox Checked="_allSelected" CheckedChanged="OnSelectAllChanged" />
+                    </TitleTemplate>
+                    <ChildContent>
+                        <span @onclick:stopPropagation="true">
+                            <Checkbox Checked="_selectedKeys.Contains(context.Key)"
+                                      CheckedChanged="v => ToggleSelect(context, v)" />
+                        </span>
+                    </ChildContent>
+                </Column>
+                <Column TData="string" Width="48" Align="ColumnAlign.Center">
+                    <span class="apiextfs-item-icon @ItemIconClass(context)">
+                        <Icon Type="@ItemIcon(context)" />
+                    </span>
+                </Column>
+                <Column TData="string" Title="名称">
+                    <a class="apiextfs-item-name"
+                       @onclick:preventDefault
+                       @onclick:stopPropagation="true"
+                       @onclick="() => OpenItem(context)">@context.DisplayName</a>
+                </Column>
+                <Column TData="long" Title="大小" Width="120">
+                    <span class="apiextfs-item-meta">@FormatSize(context.Size)</span>
+                </Column>
+                <Column TData="DateTime?" Title="修改时间" Width="170">
+                    <span class="apiextfs-item-meta">@FormatDate(context.Modified)</span>
+                </Column>
+                <ActionColumn Title="操作" Width="120" Align="ColumnAlign.Right">
+                    <span @onclick:stopPropagation="true" class="apiextfs-row-actions">
+                        <Space>
+                            @if (context.IsObject)
+                            {
+                                <SpaceItem>
+                                    <Tooltip Title="@("下载")">
+                                        <Button Type="@ButtonType.Text" Icon="download" OnClick="() => DownloadAsync(context)" />
+                                    </Tooltip>
+                                </SpaceItem>
+                                @if (_canDelete)
+                                {
+                                    <SpaceItem>
+                                        <Tooltip Title="@("删除")">
+                                            <Button Type="@ButtonType.Text" Danger Icon="delete" OnClick="() => RequestDeleteSingle(context)" />
+                                        </Tooltip>
+                                    </SpaceItem>
+                                }
+                            }
+                            else if (!context.IsBucket && _canDelete)
+                            {
+                                <SpaceItem>
+                                    <Tooltip Title="@("删除")">
+                                        <Button Type="@ButtonType.Text" Danger Icon="delete" OnClick="() => RequestDeleteSingle(context)" />
+                                    </Tooltip>
+                                </SpaceItem>
+                            }
+                        </Space>
+                    </span>
+                </ActionColumn>
+            </Table>
+        }
+    </div>
+</Card>
+
+<!-- ── Detail drawer ─────────────────────────────────────────────── -->
+<Drawer Closable Visible="_detail is not null" Title="@(_detail?.DisplayName ?? "详情")" OnClose="_ => CloseDetail()" Width="380">
+    @if (_detail is not null)
+    {
+        <div class="apiextfs-detail-icon @ItemIconClass(_detail)"><Icon Type="@ItemIcon(_detail)" /></div>
+        <Descriptions Column="1" Bordered Size="@DescriptionsSize.Small">
+            @if (_detail.IsObject)
+            {
+                <DescriptionsItem Title="完整 Key"><AntDesign.Text Code>@_detail.Key</AntDesign.Text></DescriptionsItem>
+                <DescriptionsItem Title="内容类型">@_detail.ContentType</DescriptionsItem>
+                <DescriptionsItem Title="大小">@FormatSize(_detail.Size) (@_detail.Size.ToString("N0") bytes)</DescriptionsItem>
+                <DescriptionsItem Title="最后修改">@_detail.Modified?.ToString("yyyy-MM-dd HH:mm:ss") UTC</DescriptionsItem>
+                <DescriptionsItem Title="ETag"><AntDesign.Text Code>@_detail.ETag</AntDesign.Text></DescriptionsItem>
+                @if (_detail.StorageClass is not null)
+                {
+                    <DescriptionsItem Title="存储类型">@_detail.StorageClass</DescriptionsItem>
+                }
+            }
+            else
+            {
+                <DescriptionsItem Title="名称">@_detail.DisplayName</DescriptionsItem>
+                @if (_detail.Modified.HasValue)
+                {
+                    <DescriptionsItem Title="创建时间">@_detail.Modified?.ToString("yyyy-MM-dd HH:mm:ss") UTC</DescriptionsItem>
+                }
+                <DescriptionsItem Title="类型">@(_detail.IsBucket ? "Bucket" : "文件夹")</DescriptionsItem>
+                @if (_detail.IsBucket)
+                {
+                    <DescriptionsItem Title="访问权限">@AccessPolicyLabel(_detail.AccessPolicy)</DescriptionsItem>
+                }
+            }
+        </Descriptions>
+
+        <div class="apiextfs-mt-2">
+            <Space Direction="@SpaceDirection.Vertical" Style="width:100%">
+                @if (_detail.IsObject)
+                {
+                    <SpaceItem>
+                        <Button Type="@ButtonType.Primary" Icon="download" Block OnClick="() => DownloadAsync(_detail)">下载</Button>
+                    </SpaceItem>
+                    @if (_canDelete)
+                    {
+                        <SpaceItem>
+                            <Button Danger Icon="delete" Block OnClick="() => RequestDeleteSingle(_detail)">删除</Button>
+                        </SpaceItem>
+                    }
+                }
+                else if (!_detail.IsBucket)
+                {
+                    <SpaceItem>
+                        <Button Type="@ButtonType.Primary" Icon="folder-open" Block Href="@_detail.NavHref">打开文件夹</Button>
+                    </SpaceItem>
+                    @if (_canDelete)
+                    {
+                        <SpaceItem>
+                            <Button Danger Icon="delete" Block OnClick="() => RequestDeleteSingle(_detail)">删除</Button>
+                        </SpaceItem>
+                    }
+                }
+                else
+                {
+                    <SpaceItem>
+                        <Button Type="@ButtonType.Primary" Icon="folder-open" Block Href="@_detail.NavHref">打开 Bucket</Button>
+                    </SpaceItem>
+                    @if (_isSuperAdmin)
+                    {
+                        <SpaceItem>
+                            <Button Icon="setting" Block OnClick="() => OpenBucketSettings(_detail.Key, _detail.AccessPolicy)">设置</Button>
+                        </SpaceItem>
+                    }
+                    <SpaceItem>
+                        <Button Icon="cloud-download" Block OnClick="() => OpenImportFromS3(_detail.Key)">从 S3 导入</Button>
+                    </SpaceItem>
+                    @if (_isSuperAdmin)
+                    {
+                        <SpaceItem>
+                            <Button Danger Icon="delete" Block OnClick="() => RequestDeleteSingle(_detail)">删除</Button>
+                        </SpaceItem>
+                    }
+                }
+            </Space>
+        </div>
+    }
+</Drawer>
+
+<!-- ── File preview modal ───────────────────────────────────────────── -->
+<FilePreviewModal @ref="_previewModal" />
+
+</div> <!-- /page-drop-zone -->
+    </ChildContent>
+</PageContainer>
+
+<!-- ── Add bucket modal ──────────────────────────────────────────── -->
+<Modal Title="新建 Bucket"
+       Visible="_showAddBucket"
+       OnOk="CreateBucketAsync"
+       OnCancel="_ => CloseAddBucket()"
+       OkText="@("创建")"
+       CancelText="@("取消")">
+    @if (_modalError is not null)
+    {
+        <Alert Type="@AlertType.Error" Message="@_modalError" ShowIcon="true" Class="apiextfs-mb-2" />
+    }
+    <Input @bind-Value="_modalName" Placeholder="my-bucket" OnPressEnter="CreateBucketAsync" />
+</Modal>
+
+<!-- ── Create folder modal ───────────────────────────────────────── -->
+<Modal Title="新建文件夹"
+       Visible="_showCreateFolder"
+       OnOk="NavigateToVirtualFolder"
+       OnCancel="_ => CloseCreateFolder()"
+       OkText="@("打开")"
+       CancelText="@("取消")">
+    @if (_modalError is not null)
+    {
+        <Alert Type="@AlertType.Error" Message="@_modalError" ShowIcon="true" Class="apiextfs-mb-2" />
+    }
+    <Input @bind-Value="_modalName" Placeholder="my-folder" OnPressEnter="NavigateToVirtualFolder" />
+</Modal>
+
+<!-- ══════════════════════════════════════════════════════════════════
+     Upload modal
+══════════════════════════════════════════════════════════════════ -->
+<Modal Title="上传文件"
+       Visible="_showUpload"
+       OnCancel="_ => CloseUploadIfIdle()"
+       Footer="null"
+       MaskClosable="false"
+       Width="560"
+       WrapClassName="apiextfs-upload-modal">
+    @* Keep InputFile mounted while uploading; Blazor file streams are tied to this input.
+       Wrap it so CSS isolation can't leave the native file control visible. *@
+    <div class="apiextfs-upload-input-host" aria-hidden="true">
+        <InputFile id="apiextfs-upload-input"
+                   @ref="_inputFileRef"
+                   OnChange="OnFilesSelected"
+                   multiple
+                   class="upload-file-input-hidden" />
+    </div>
+
+    @if (!_uploading)
+    {
+        <div class="apiextfs-upload-dropzone" role="button" tabindex="0"
+             @onclick="TriggerFilePickerAsync"
+             @onkeydown="OnUploadDropzoneKeyDown">
+            <div class="apiextfs-upload-dropzone-icon">
+                <Icon Type="cloud-upload" Theme="IconThemeType.Outline" />
+            </div>
+            <div class="apiextfs-upload-dropzone-title">点击选择文件，或拖放到页面任意位置</div>
+            <div class="apiextfs-upload-dropzone-desc">
+                支持多选。也可关闭弹窗后，直接把文件拖到列表页面上传。
+            </div>
+            <span class="ant-btn ant-btn-default apiextfs-upload-pick-btn">选择文件</span>
+        </div>
+
+        @if (_uploadQueue.Count > 0)
+        {
+            <div class="apiextfs-upload-summary">
+                <span>已选择 <strong>@_uploadQueue.Count</strong> 个文件</span>
+                <Button Type="@ButtonType.Link" Size="@ButtonSize.Small" OnClick="ClearUploadQueue">清空列表</Button>
+            </div>
+
+            <div class="upload-file-list">
+                @foreach (var f in _uploadQueue)
+                {
+                    <div class="upload-file-row">
+                        <span class="upload-file-icon">
+                            <Icon Type="@ContentIcon(f.ContentType)" />
+                        </span>
+                        <span class="upload-file-name" title="@f.RelativePath">@f.RelativePath</span>
+                        <span class="upload-file-size">@FormatSize(f.Size)</span>
+                        <Button Type="@ButtonType.Text"
+                                Danger
+                                Icon="close"
+                                Size="@ButtonSize.Small"
+                                OnClick="() => RemoveUploadEntry(f)" />
+                    </div>
+                }
+            </div>
+
+            <div class="apiextfs-modal-footer">
+                <Button OnClick="CloseUpload">取消</Button>
+                <Button Type="@ButtonType.Primary" Icon="upload" OnClick="StartUploadAsync">
+                    开始上传（@_uploadQueue.Count）
+                </Button>
+            </div>
+        }
+        else
+        {
+            <div class="apiextfs-modal-footer">
+                <Button OnClick="CloseUpload">取消</Button>
+            </div>
+        }
+    }
+    else
+    {
+        <div class="apiextfs-upload-progress-head">
+            <span>
+                @if (_uploadDone)
+                {
+                    <text>上传完成</text>
+                }
+                else
+                {
+                    <text>正在上传…</text>
+                }
+            </span>
+            <span class="apiextfs-upload-progress-meta">
+                @_uploadQueue.Count(f => f.Status is UploadStatus.Done) / @_uploadQueue.Count
+            </span>
+        </div>
+
+        <div class="upload-file-list">
+            @foreach (var f in _uploadQueue)
+            {
+                <div class="upload-file-row upload-file-row-progress">
+                    <span class="upload-file-icon @StatusClass(f.Status)">
+                        <Icon Type="@StatusIcon(f.Status)" Spin="@(f.Status == UploadStatus.Uploading)" />
+                    </span>
+                    <div class="upload-file-main">
+                        <div class="upload-file-main-top">
+                            <span class="upload-file-name" title="@f.RelativePath">@f.RelativePath</span>
+                            <span class="upload-file-size @StatusClass(f.Status)">@StatusLabel(f.Status)</span>
+                        </div>
+                        @if (f.Status == UploadStatus.Uploading)
+                        {
+                            <Progress Percent="f.Progress" Size="@ProgressSize.Small" ShowInfo="false" />
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+
+        @if (_uploadDone)
+        {
+            @if (_skippedFiles.Count > 0)
+            {
+                <Alert Type="@AlertType.Warning" ShowIcon="true" Class="apiextfs-mt-2"
+                       Message="@("已跳过（没有更新权限）")">
+                    <ChildContent>
+                        <ul class="skipped-list">
+                            @foreach (var s in _skippedFiles)
+                            {
+                                <li>@s</li>
+                            }
+                        </ul>
+                    </ChildContent>
+                </Alert>
+            }
+            <div class="apiextfs-modal-footer">
+                <Button Type="@ButtonType.Primary" OnClick="CloseUploadAndRefresh">完成</Button>
+            </div>
+        }
+    }
+</Modal>
+
+<!-- ══════════════════════════════════════════════════════════════════
+     Overwrite confirmation modal
+══════════════════════════════════════════════════════════════════ -->
+<Modal Title="文件已存在"
+       Visible="_overwriteFile is not null"
+       Closable="false"
+       MaskClosable="false"
+       Footer="null">
+    @if (_overwriteFile is not null)
+    {
+        <p><AntDesign.Text Strong>@_overwriteFile.RelativePath</AntDesign.Text> 已存在。</p>
+        <div class="apiextfs-modal-footer">
+            <Space Wrap>
+                <SpaceItem>
+                    <Button Type="@ButtonType.Primary" OnClick="() => ResolveOverwrite(OverwriteChoice.Overwrite)">覆盖</Button>
+                </SpaceItem>
+                <SpaceItem>
+                    <Button OnClick="() => ResolveOverwrite(OverwriteChoice.OverwriteAll)">全部覆盖</Button>
+                </SpaceItem>
+                <SpaceItem>
+                    <Button OnClick="() => ResolveOverwrite(OverwriteChoice.Skip)">跳过</Button>
+                </SpaceItem>
+                <SpaceItem>
+                    <Button OnClick="() => ResolveOverwrite(OverwriteChoice.SkipAll)">全部跳过</Button>
+                </SpaceItem>
+            </Space>
+        </div>
+    }
+</Modal>
+
+<!-- ══════════════════════════════════════════════════════════════════
+     Import from S3 modal
+══════════════════════════════════════════════════════════════════ -->
+<Modal Title="从 S3 导入"
+       Visible="_showImportFromS3"
+       OnCancel="_ => CloseImportFromS3()"
+       Footer="null">
+    @if (_modalError is not null)
+    {
+        <Alert Type="@AlertType.Error" Message="@_modalError" ShowIcon="true" Class="apiextfs-mb-2" />
+    }
+    @if (_importQueuedId is not null)
+    {
+        <Alert Type="@AlertType.Success" Message="@($"导入任务已加入队列：{_importQueuedId}")" ShowIcon="true" Class="apiextfs-mb-2" />
+    }
+    <div class="apiextfs-modal-form">
+        <div class="apiextfs-form-item">
+            <label>服务地址</label>
+            <Input @bind-Value="_importServerUrl" Placeholder="https://s3.example.com" />
+        </div>
+        <div class="apiextfs-form-item">
+            <label>用户名</label>
+            <Input @bind-Value="_importUsername" Placeholder="Access key" />
+        </div>
+        <div class="apiextfs-form-item">
+            <label>密钥</label>
+            <InputPassword @bind-Value="_importKey" Placeholder="Secret key" />
+        </div>
+        <div class="apiextfs-form-item">
+            <label>Bucket 名称</label>
+            <Input @bind-Value="_importSourceBucket" Placeholder="source-bucket" />
+        </div>
+        <div class="apiextfs-form-item">
+            <label>重复对象</label>
+            <Select @bind-Value="_importDuplicateMode" TItemValue="string" TItem="string" Style="width:100%">
+                <SelectOptions>
+                    <SelectOption TItemValue="string" TItem="string" Value="@("Overwrite")" Label="覆盖" />
+                    <SelectOption TItemValue="string" TItem="string" Value="@("Skip")" Label="跳过" />
+                    <SelectOption TItemValue="string" TItem="string" Value="@("Rename")" Label="重命名" />
+                </SelectOptions>
+            </Select>
+        </div>
+    </div>
+    <div class="apiextfs-modal-footer">
+        <Space>
+            <SpaceItem>
+                <Button Type="@ButtonType.Primary" OnClick="QueueImportFromS3Async" Loading="_importQueueing">加入导入队列</Button>
+            </SpaceItem>
+            <SpaceItem>
+                <Button OnClick="CloseImportFromS3">关闭</Button>
+            </SpaceItem>
+        </Space>
+    </div>
+</Modal>
+
+<!-- ══════════════════════════════════════════════════════════════════
+     Delete confirmation modal
+══════════════════════════════════════════════════════════════════ -->
+<Modal Title="确认删除"
+       Visible="_deleteTarget is not null"
+       OnOk="ConfirmDeleteAsync"
+       OnCancel="_ => CancelDelete()"
+       OkText="@("确认删除")"
+       CancelText="@("取消")"
+       OkType="@ButtonType.Primary"
+       ConfirmLoading="_deleting">
+    @if (_deleteTarget is not null)
+    {
+        @if (_deleteBatch)
+        {
+            <p>确定删除 <AntDesign.Text Strong>@_selectedKeys.Count 个已选对象</AntDesign.Text> 吗？此操作不可撤销。</p>
+        }
+        else
+        {
+            <p>确定删除 <AntDesign.Text Strong>@_deleteTarget.Key</AntDesign.Text> 吗？此操作不可撤销。</p>
+        }
+    }
+</Modal>
+
+<!-- ══════════════════════════════════════════════════════════════════
+     Bucket settings modal
+══════════════════════════════════════════════════════════════════ -->
+<Modal Title="Bucket 设置"
+       Visible="_showBucketSettings"
+       OnOk="SaveBucketSettingsAsync"
+       OnCancel="_ => CloseBucketSettings()"
+       OkText="@("保存更改")"
+       CancelText="@("取消")"
+       ConfirmLoading="_bucketPolicySaving">
+    <p><AntDesign.Text Type="@TextElementType.Secondary">@_bucketSettingsBucket</AntDesign.Text></p>
+
+    @if (_bucketSettingsError is not null)
+    {
+        <Alert Type="@AlertType.Error" Message="@_bucketSettingsError" ShowIcon="true" Class="apiextfs-mb-2" />
+    }
+
+    <div class="apiextfs-field-block">
+        <label class="apiextfs-field-label">Bucket 访问权限</label>
+        <Select @bind-Value="_bucketSettingsAccessPolicy" TItemValue="string" TItem="string" Style="width:100%">
+            <SelectOptions>
+                <SelectOption TItemValue="string" TItem="string" Value="@BucketAccessPolicies.Private" Label="私有" />
+                <SelectOption TItemValue="string" TItem="string" Value="@BucketAccessPolicies.PublicRead" Label="公开读取" />
+            </SelectOptions>
+        </Select>
+    </div>
+
+    @if (_bucketSettingsAccessPolicy == BucketAccessPolicies.PublicRead)
+    {
+        <Alert Type="@AlertType.Info" ShowIcon="true"
+               Message="公开读取仅允许匿名 GET/HEAD 访问对象；列出、上传、更新和删除仍需要认证。" />
+    }
+    else
+    {
+        <Alert Type="@AlertType.Info" ShowIcon="true"
+               Message="私有模式要求认证并具备 Bucket 权限后才能访问对象。" />
+    }
+</Modal>
+
+@code {
+    // ── Parameters ──────────────────────────────────────────────────────────
+    [Parameter] public string? BucketName { get; set; }
+    [Parameter] public string? Prefix     { get; set; }
+
+    [CascadingParameter] private Task<AuthenticationState>? AuthState { get; set; }
+
+    // ── Identity / permissions ───────────────────────────────────────────────
+    private bool   _loading      = true;
+    private string? _error;
+    private bool   _isSuperAdmin;
+    private bool   _canDelete;
+    private bool   _canAdd;
+    private bool   _canUpdate;
+    private string _userId       = string.Empty;
+    private string _username     = string.Empty;
+    private BucketPolicyDto? _currentBucketPolicy;
+    private bool _bucketPolicySaving;
+    private bool _showBucketSettings;
+    private string? _bucketSettingsBucket;
+    private string _bucketSettingsAccessPolicy = BucketAccessPolicies.Private;
+    private string? _bucketSettingsError;
+
+    // ── List state ───────────────────────────────────────────────────────────
+    private List<ExplorerItem> _items        = [];
+    private HashSet<string>    _selectedKeys  = [];
+    private string             _search        = string.Empty;
+    private bool               _allSelected;
+    private ExplorerItem?      _detail;
+    private List<(string Seg, string Href)> _breadcrumbs = [];
+
+    // ── Add bucket modal ─────────────────────────────────────────────────────
+    private bool    _showAddBucket;
+
+    // ── Create folder modal ──────────────────────────────────────────────────
+    private bool    _showCreateFolder;
+
+    // shared modal fields
+    private string  _modalName  = string.Empty;
+    private string? _modalError;
+
+    // ── Delete ───────────────────────────────────────────────────────────────
+    private ExplorerItem? _deleteTarget;
+    private bool          _deleteBatch;
+    private bool          _deleting;
+
+    // ── Upload ───────────────────────────────────────────────────────────────
+    private bool                 _showUpload;
+    private bool                 _uploading;
+    private bool                 _uploadDone;
+    private List<UploadEntry>    _uploadQueue  = [];
+    private List<string>         _skippedFiles = [];
+    private UploadEntry?         _overwriteFile;
+    private TaskCompletionSource<OverwriteChoice>? _overwriteTcs;
+    private bool                 _overwriteAll;
+    private bool                 _skipAll;
+
+    // ── Import from S3 ───────────────────────────────────────────────────────
+    private bool    _showImportFromS3;
+    private bool    _importQueueing;
+    private string? _importTargetBucket;
+    private string? _importQueuedId;
+    private string  _importServerUrl     = string.Empty;
+    private string  _importUsername      = string.Empty;
+    private string  _importKey           = string.Empty;
+    private string  _importSourceBucket  = string.Empty;
+    private string  _importDuplicateMode = DownloadDuplicateModes.Overwrite;
+
+    // ── Computed ─────────────────────────────────────────────────────────────
+    private List<ExplorerItem> _visibleItems =>
+        string.IsNullOrWhiteSpace(_search)
+            ? _items
+            : _items.Where(i => i.DisplayName.Contains(_search, StringComparison.OrdinalIgnoreCase)).ToList();
+
+    private string CurrentPrefix => string.IsNullOrEmpty(Prefix) ? ""
+        : (Prefix.EndsWith('/') ? Prefix : Prefix + "/");
+
+    // ── Lifecycle ────────────────────────────────────────────────────────────
+    protected override async Task OnParametersSetAsync()
+    {
+        _loading      = true;
+        _error        = null;
+        _detail       = null;
+        _selectedKeys.Clear();
+        _allSelected  = false;
+        _search       = string.Empty;
+        _items        = [];
+        _canAdd       = false;
+        _canUpdate    = false;
+        _canDelete    = false;
+        _currentBucketPolicy = null;
+        ResetUploadState();
+
+        if (AuthState is not null)
+        {
+            var state     = await AuthState;
+            _userId       = state.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? string.Empty;
+            _username     = state.User.FindFirstValue(ClaimTypes.Name) ?? _userId;
+            _isSuperAdmin = state.User.FindFirstValue("is_super_admin") == "true";
+        }
+
+        BuildBreadcrumbs();
+
+        try
+        {
+            if (BucketName is null)
+                await LoadBucketsAsync();
+            else
+                await LoadObjectsAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+
+        _loading = false;
+    }
+
+    private void BuildBreadcrumbs()
+    {
+        _breadcrumbs.Clear();
+        if (BucketName is null || string.IsNullOrEmpty(Prefix)) return;
+        var segments = Prefix.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var accum    = string.Empty;
+        foreach (var seg in segments)
+        {
+            accum = string.IsNullOrEmpty(accum) ? seg + "/" : accum + seg + "/";
+            _breadcrumbs.Add((seg, $"/_apiextfs/buckets/{BucketName}/{accum}"));
+        }
+    }
+
+    // ── Load buckets ─────────────────────────────────────────────────────────
+    private async Task LoadBucketsAsync()
+    {
+        var identity  = CallerIdentity();
+        var response  = await BucketSvc.ListBucketsAsync(identity.UserId);
+        var policyByBucket = await BucketPolicies.GetPoliciesAsync(
+            response.Buckets.Select(b => b.Name));
+        var accessible = new List<ExplorerItem>();
+        foreach (var b in response.Buckets)
+        {
+            var policy = policyByBucket.TryGetValue(b.Name, out var p)
+                ? p.AccessPolicy
+                : BucketAccessPolicies.Private;
+
+            if (identity.IsSuperAdmin) { accessible.Add(BucketItem(b, policy)); continue; }
+            var acl = await Authz.CheckAccessAsync(identity, b.Name, BucketPermission.Read);
+            if (acl == AclCheckResult.Allowed) accessible.Add(BucketItem(b, policy));
+        }
+        _items = accessible.OrderBy(i => i.DisplayName, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    private static ExplorerItem BucketItem(BucketEntry b, string accessPolicy) => new()
+    {
+        Key         = b.Name,
+        DisplayName = b.Name,
+        IsObject    = false,
+        IsBucket    = true,
+        AccessPolicy = accessPolicy,
+        Modified    = DateTime.TryParse(b.CreationDate, out var dt) ? dt.ToUniversalTime() : null,
+        NavHref     = $"/_apiextfs/buckets/{b.Name}"
+    };
+
+    // ── Load objects ─────────────────────────────────────────────────────────
+    private async Task LoadObjectsAsync()
+    {
+        var identity = CallerIdentity();
+        _currentBucketPolicy = await BucketPolicies.GetPolicyAsync(BucketName!);
+
+        if (!identity.IsSuperAdmin)
+        {
+            var read = await Authz.CheckAccessAsync(identity, BucketName!, BucketPermission.Read);
+            if (read != AclCheckResult.Allowed) { _error = "You do not have read access to this bucket."; return; }
+        }
+
+        _canDelete = identity.IsSuperAdmin || (await Authz.CheckAccessAsync(identity, BucketName!, BucketPermission.Delete)) == AclCheckResult.Allowed;
+        _canAdd    = identity.IsSuperAdmin || (await Authz.CheckAccessAsync(identity, BucketName!, BucketPermission.Add))    == AclCheckResult.Allowed;
+        _canUpdate = identity.IsSuperAdmin || (await Authz.CheckAccessAsync(identity, BucketName!, BucketPermission.Update)) == AclCheckResult.Allowed;
+
+        var prefix = CurrentPrefix;
+        var req    = new ListObjectsV2Request { Prefix = prefix, Delimiter = "/", MaxKeys = 1000 };
+        var resp   = await BucketSvc.ListObjectsV2Async(BucketName!, req);
+
+        var list = new List<ExplorerItem>();
+
+        foreach (var cp in resp.CommonPrefixes)
+        {
+            var folderKey = cp.Prefix;
+            var display   = folderKey.TrimEnd('/');
+            if (!string.IsNullOrEmpty(prefix)) display = display[prefix.Length..];
+            list.Add(new ExplorerItem
+            {
+                Key         = folderKey,
+                DisplayName = display,
+                IsObject    = false,
+                IsBucket    = false,
+                NavHref     = $"/_apiextfs/buckets/{BucketName}/{folderKey}"
+            });
+        }
+
+        foreach (var obj in resp.Contents)
+        {
+            if (obj.Key == prefix) continue;
+            var displayName = obj.Key;
+            if (!string.IsNullOrEmpty(prefix) && displayName.StartsWith(prefix))
+                displayName = displayName[prefix.Length..];
+
+            string contentType = "application/octet-stream", etag = obj.ETag;
+            string? storageClass = obj.StorageClass;
+            try
+            {
+                var head = await ObjectSvc.HeadObjectAsync(new Models.Api.Objects.GetObjectRequest { Bucket = BucketName!, Key = obj.Key });
+                if (head is not null) { contentType = head.ContentType; etag = head.ETag; storageClass = head.StorageClass; }
+            }
+            catch { /* best effort */ }
+
+            list.Add(new ExplorerItem
+            {
+                Key          = obj.Key,
+                DisplayName  = displayName,
+                IsObject     = true,
+                Size         = obj.Size,
+                Modified     = DateTime.TryParse(obj.LastModified, out var dt) ? dt.ToUniversalTime() : null,
+                ContentType  = contentType,
+                ETag         = etag,
+                StorageClass = storageClass
+            });
+        }
+
+        _items = list.OrderBy(i => i.DisplayName, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    // ── Selection ────────────────────────────────────────────────────────────
+    private void ToggleSelect(ExplorerItem item, bool value)
+    {
+        if (value) _selectedKeys.Add(item.Key);
+        else       _selectedKeys.Remove(item.Key);
+        _allSelected = _items.Count > 0 && _items.All(i => _selectedKeys.Contains(i.Key));
+    }
+
+    private void OnSelectAllChanged(bool value)
+    {
+        _allSelected = value;
+        _selectedKeys.Clear();
+        if (_allSelected) foreach (var i in _items) _selectedKeys.Add(i.Key);
+    }
+
+    // Table row click → toggle detail panel
+    private void OnRowClick(AntDesign.TableModels.RowData<ExplorerItem> row)
+        => ShowDetail(row.Data);
+
+    // Double-click row → open item (folder / preview), matching original explorer behavior
+    private Dictionary<string, object> GetRowAttributes(AntDesign.TableModels.RowData<ExplorerItem> row)
+        => new()
+        {
+            ["ondblclick"] = EventCallback.Factory.Create(this, () => OpenItem(row.Data))
+        };
+
+    private string GetRowClassName(AntDesign.TableModels.RowData<ExplorerItem> row)
+        => _detail?.Key == row.Data.Key ? "apiextfs-row-active" : string.Empty;
+
+    private string EmptyDescription()
+    {
+        if (!string.IsNullOrEmpty(_search))
+            return "没有匹配的项目，请尝试其他搜索关键词。";
+
+        if (BucketName is null)
+            return "还没有 Bucket。创建后即可开始上传和管理对象。";
+
+        return "当前位置为空。可以新建文件夹，或上传文件。";
+    }
+
+    // ── Detail ───────────────────────────────────────────────────────────────
+    private void ShowDetail(ExplorerItem item) => _detail = _detail?.Key == item.Key ? null : item;
+    private void CloseDetail() => _detail = null;
+
+    private void OpenBucketSettings(string bucketName, string accessPolicy)
+    {
+        if (!_isSuperAdmin)
+            return;
+
+        _bucketSettingsBucket = bucketName;
+        _bucketSettingsAccessPolicy = accessPolicy is BucketAccessPolicies.PublicRead
+            ? BucketAccessPolicies.PublicRead
+            : BucketAccessPolicies.Private;
+        _bucketSettingsError = null;
+        _showBucketSettings = true;
+    }
+
+    private void CloseBucketSettings()
+    {
+        if (_bucketPolicySaving)
+            return;
+
+        _showBucketSettings = false;
+        _bucketSettingsError = null;
+    }
+
+    private async Task SaveBucketSettingsAsync()
+    {
+        if (!_isSuperAdmin || string.IsNullOrWhiteSpace(_bucketSettingsBucket))
+            return;
+
+        var requested = _bucketSettingsAccessPolicy;
+        if (requested is not BucketAccessPolicies.Private and not BucketAccessPolicies.PublicRead)
+            return;
+
+        _bucketPolicySaving = true;
+        _bucketSettingsError = null;
+
+        try
+        {
+            var bucketName = _bucketSettingsBucket;
+            await BucketPolicies.SetAccessPolicyAsync(bucketName, requested);
+
+            if (BucketName == bucketName)
+            {
+                _currentBucketPolicy = new BucketPolicyDto
+                {
+                    BucketName = bucketName,
+                    AccessPolicy = requested
+                };
+            }
+
+            foreach (var item in _items.Where(i => i.IsBucket && i.Key == bucketName))
+                item.AccessPolicy = requested;
+
+            if (_detail?.IsBucket == true && _detail.Key == bucketName)
+                _detail.AccessPolicy = requested;
+
+            _showBucketSettings = false;
+        }
+        catch (Exception ex)
+        {
+            _bucketSettingsError = ex.Message;
+        }
+        finally
+        {
+            _bucketPolicySaving = false;
+        }
+    }
+
+    private FilePreviewModal? _previewModal;
+
+    private void OpenItem(ExplorerItem item)
+    {
+        if (!item.IsObject)
+        {
+            Nav.NavigateTo(item.NavHref);
+            return;
+        }
+
+        var previewItem = new FilePreviewModal.PreviewItem
+        {
+            DisplayName = item.DisplayName,
+            ContentType = item.ContentType,
+            PreviewUrl  = BuildPresignedUrl(BucketName!, item.Key)
+        };
+
+        var allPreviewItems = _visibleItems
+            .Where(i => i.IsObject)
+            .Select(i => i.Key == item.Key ? previewItem : new FilePreviewModal.PreviewItem
+            {
+                DisplayName = i.DisplayName,
+                ContentType = i.ContentType,
+                PreviewUrl  = BuildPresignedUrl(BucketName!, i.Key)
+            })
+            .ToList();
+
+        _ = _previewModal?.OpenAsync(previewItem, allPreviewItems);
+    }
+
+    // ── Download ─────────────────────────────────────────────────────────────
+    private async Task DownloadAsync(ExplorerItem item)
+    {
+        if (!item.IsObject || BucketName is null) return;
+        var url = AppendQuery(BuildPresignedUrl(BucketName, item.Key), "download=1");
+        await JS.InvokeVoidAsync("apiextfsDownload", url, item.DisplayName);
+    }
+
+    private async Task DownloadZipAsync()
+    {
+        if (_selectedKeys.Count == 0) return;
+
+        if (BucketName is null)
+        {
+            await JS.InvokeVoidAsync("apiextfsDownloadZip", string.Empty, _selectedKeys.ToArray(), "buckets.zip");
+        }
+        else
+        {
+            var keys    = _selectedKeys.ToArray();
+            var zipName = (string.IsNullOrEmpty(Prefix) ? BucketName : Prefix.Trim('/')) + ".zip";
+            await JS.InvokeVoidAsync("apiextfsDownloadZip", BucketName, keys, zipName);
+        }
+    }
+
+    // ── Add bucket ───────────────────────────────────────────────────────────
+    private void OpenAddBucket()  { _modalName = string.Empty; _modalError = null; _showAddBucket = true; }
+    private void CloseAddBucket() { _showAddBucket = false; }
+
+    private async Task OnAddBucketKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(_modalName)) await CreateBucketAsync();
+        else if (e.Key == "Escape") CloseAddBucket();
+    }
+
+    private async Task CreateBucketAsync()
+    {
+        _modalError = null;
+        var name = _modalName.Trim();
+        if (string.IsNullOrEmpty(name))
+        {
+            _modalError = "Bucket 名称不能为空。";
+            return;
+        }
+        try
+        {
+            await BucketSvc.CreateBucketAsync(name, region: null, ownerId: _userId);
+            CloseAddBucket();
+            await OnParametersSetAsync();
+        }
+        catch (Exception ex) { _modalError = ex.Message; }
+    }
+
+    // ── Create folder ────────────────────────────────────────────────────────
+    private void OpenCreateFolder()  { _modalName = string.Empty; _modalError = null; _showCreateFolder = true; }
+    private void CloseCreateFolder() { _showCreateFolder = false; }
+
+    private async Task OnCreateFolderKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(_modalName)) await NavigateToVirtualFolder();
+        else if (e.Key == "Escape") CloseCreateFolder();
+    }
+
+    private async Task NavigateToVirtualFolder()
+    {
+        _modalError = null;
+        var name = _modalName.Trim().Trim('/');
+        if (string.IsNullOrEmpty(name)) return;
+
+        // Reject names with path separators
+        if (name.Contains('/')) { _modalError = "文件夹名称不能包含 '/'。"; return; }
+
+        // Check for duplicate at current level
+        var folderKey = CurrentPrefix + name + "/";
+        var exists    = _items.Any(i => !i.IsObject && i.Key == folderKey);
+        if (exists) { _modalError = "同名文件夹已存在。"; return; }
+
+        CloseCreateFolder();
+        Nav.NavigateTo($"/_apiextfs/buckets/{BucketName}/{folderKey}");
+        await Task.CompletedTask;
+    }
+
+    // ── Page-level drag-and-drop ──────────────────────────────────────────────
+    private InputFile?  _inputFileRef;
+    private ElementReference _pageDropOverlayRef;
+    private bool        _dropRegistered;
+    private bool        _pendingApplyDrop;
+    private DotNetObjectReference<Buckets>? _dropRef;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // Re-register whenever we enter a bucket with upload rights.
+        var shouldRegister = BucketName is not null && (_canAdd || _canUpdate);
+        if (shouldRegister && !_dropRegistered)
+            await RegisterDropAsync();
+        else if (!shouldRegister && _dropRegistered)
+            await UnregisterDropAsync();
+
+        if (_pendingApplyDrop && _inputFileRef is not null)
+        {
+            _pendingApplyDrop = false;
+            await JS.InvokeVoidAsync("apiextfsApplyDropFiles", _inputFileRef.Element);
+        }
+    }
+
+    private async Task RegisterDropAsync()
+    {
+        _dropRef?.Dispose();
+        _dropRef = DotNetObjectReference.Create(this);
+        await JS.InvokeVoidAsync("apiextfsRegisterDrop", _dropRef, _pageDropOverlayRef);
+        _dropRegistered = true;
+    }
+
+    private async Task UnregisterDropAsync()
+    {
+        try { await JS.InvokeVoidAsync("apiextfsUnregisterDrop"); } catch { }
+        _dropRef?.Dispose();
+        _dropRef = null;
+        _dropRegistered = false;
+    }
+
+    [JSInvokable]
+    public void OnPageDrop()
+    {
+        OpenUpload();
+        _pendingApplyDrop = true;
+        StateHasChanged();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        _dropRef?.Dispose();
+        try { await JS.InvokeVoidAsync("apiextfsUnregisterDrop"); } catch { }
+    }
+
+    // ── Upload ───────────────────────────────────────────────────────────────
+    private void OpenUpload()
+    {
+        _showUpload = true;
+    }
+
+    private void CloseUpload()
+    {
+        _showUpload = false;
+        ResetUploadState();
+    }
+
+    private void CloseUploadIfIdle()      { if (!_uploading) CloseUpload(); }
+    private async Task CloseUploadAndRefresh() { CloseUpload(); await OnParametersSetAsync(); }
+
+    private async Task TriggerFilePickerAsync()
+    {
+        if (_uploading) return;
+        try
+        {
+            await JS.InvokeVoidAsync("apiextfsClick", "#apiextfs-upload-input");
+        }
+        catch
+        {
+            // ignore if modal is closing / JS unavailable
+        }
+    }
+
+    private async Task OnUploadDropzoneKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key is "Enter" or " ")
+            await TriggerFilePickerAsync();
+    }
+
+    private void ClearUploadQueue()
+    {
+        if (_uploading) return;
+        _uploadQueue = [];
+    }
+
+    private void RemoveUploadEntry(UploadEntry entry)
+    {
+        if (_uploading) return;
+        _uploadQueue.Remove(entry);
+    }
+
+    private void ResetUploadState()
+    {
+        _uploadQueue  = [];
+        _skippedFiles = [];
+        _uploading    = false;
+        _uploadDone   = false;
+        _overwriteFile = null;
+        _overwriteTcs  = null;
+        _overwriteAll  = false;
+        _skipAll       = false;
+    }
+
+    private void OnFilesSelected(InputFileChangeEventArgs e)
+        => AddFilesToUploadQueue(e);
+
+    private void AddFilesToUploadQueue(InputFileChangeEventArgs e)
+    {
+        foreach (var file in e.GetMultipleFiles(500))
+        {
+            // Derive relative path (browsers may provide webkitRelativePath via name when folder upload)
+            var rel = file.Name;
+            var ct  = string.IsNullOrEmpty(file.ContentType) ? "application/octet-stream" : file.ContentType;
+
+            // Avoid exact duplicates
+            if (_uploadQueue.Any(q => q.RelativePath == rel)) continue;
+
+            _uploadQueue.Add(new UploadEntry
+            {
+                File         = file,
+                RelativePath = rel,
+                Size         = file.Size,
+                ContentType  = ct,
+                Status       = UploadStatus.Pending
+            });
+        }
+
+        StateHasChanged();
+    }
+
+    private async Task StartUploadAsync()
+    {
+        _uploading    = true;
+        _uploadDone   = false;
+        _overwriteAll = false;
+        _skipAll      = false;
+        _skippedFiles = [];
+
+        // Pre-fetch all existing keys under current prefix once
+        var existingKeys = new HashSet<string>();
+        try
+        {
+            var listReq = new ListObjectsV2Request { Prefix = CurrentPrefix, MaxKeys = 1000 };
+            ListObjectsV2Response? listResp;
+            do
+            {
+                listResp = await BucketSvc.ListObjectsV2Async(BucketName!, listReq);
+                foreach (var o in listResp.Contents) existingKeys.Add(o.Key);
+                listReq.ContinuationToken = listResp.NextContinuationToken;
+            } while (listResp.IsTruncated);
+        }
+        catch { /* best effort */ }
+
+        foreach (var entry in _uploadQueue)
+        {
+            var objectKey = CurrentPrefix + entry.RelativePath;
+
+            if (existingKeys.Contains(objectKey))
+            {
+                if (_skipAll)
+                {
+                    entry.Status = UploadStatus.Skipped;
+                    _skippedFiles.Add(entry.RelativePath);
+                    StateHasChanged();
+                    continue;
+                }
+
+                if (!_canUpdate)
+                {
+                    entry.Status = UploadStatus.Skipped;
+                    _skippedFiles.Add(entry.RelativePath);
+                    StateHasChanged();
+                    continue;
+                }
+
+                if (!_overwriteAll)
+                {
+                    var choice = await AskOverwrite(entry);
+                    switch (choice)
+                    {
+                        case OverwriteChoice.Skip:
+                            entry.Status = UploadStatus.Skipped;
+                            _skippedFiles.Add(entry.RelativePath);
+                            StateHasChanged();
+                            continue;
+                        case OverwriteChoice.SkipAll:
+                            _skipAll     = true;
+                            entry.Status = UploadStatus.Skipped;
+                            _skippedFiles.Add(entry.RelativePath);
+                            StateHasChanged();
+                            continue;
+                        case OverwriteChoice.OverwriteAll:
+                            _overwriteAll = true;
+                            break;
+                        // OverwriteChoice.Overwrite → fall through
+                    }
+                }
+            }
+
+            entry.Status   = UploadStatus.Uploading;
+            entry.Progress = 0;
+            StateHasChanged();
+
+            try
+            {
+                await using var stream = entry.File!.OpenReadStream(maxAllowedSize: 2L * 1024 * 1024 * 1024);
+                var req = new Models.Api.Objects.PutObjectRequest
+                {
+                    Bucket      = BucketName!,
+                    Key         = objectKey,
+                    ContentType = entry.ContentType
+                };
+                await ObjectSvc.PutObjectAsync(req, stream);
+                entry.Status   = UploadStatus.Done;
+                entry.Progress = 100;
+            }
+            catch (Exception ex)
+            {
+                entry.Status      = UploadStatus.Error;
+                entry.ErrorDetail = ex.Message;
+            }
+
+            StateHasChanged();
+        }
+
+        _uploadDone = true;
+        StateHasChanged();
+    }
+
+    private async Task<OverwriteChoice> AskOverwrite(UploadEntry entry)
+    {
+        _overwriteFile = entry;
+        _overwriteTcs  = new TaskCompletionSource<OverwriteChoice>();
+        StateHasChanged();
+        var result = await _overwriteTcs.Task;
+        _overwriteFile = null;
+        StateHasChanged();
+        return result;
+    }
+
+    private void ResolveOverwrite(OverwriteChoice choice) => _overwriteTcs?.TrySetResult(choice);
+
+    // ── Import from S3 ───────────────────────────────────────────────────────
+    private void OpenImportFromS3(string targetBucket)
+    {
+        _importTargetBucket = targetBucket;
+        _importServerUrl = string.Empty;
+        _importUsername = string.Empty;
+        _importKey = string.Empty;
+        _importSourceBucket = string.Empty;
+        _importDuplicateMode = DownloadDuplicateModes.Overwrite;
+        _importQueuedId = null;
+        _modalError = null;
+        _showImportFromS3 = true;
+    }
+
+    private void CloseImportFromS3()
+    {
+        _showImportFromS3 = false;
+        _importQueueing = false;
+        _importQueuedId = null;
+    }
+
+    private async Task QueueImportFromS3Async()
+    {
+        _modalError = null;
+        if (string.IsNullOrWhiteSpace(_importTargetBucket)
+            || string.IsNullOrWhiteSpace(_importServerUrl)
+            || string.IsNullOrWhiteSpace(_importUsername)
+            || string.IsNullOrWhiteSpace(_importKey)
+            || string.IsNullOrWhiteSpace(_importSourceBucket))
+        {
+            _modalError = "所有字段均不能为空。";
+            return;
+        }
+
+        if (!Uri.TryCreate(_importServerUrl.Trim(), UriKind.Absolute, out _))
+        {
+            _modalError = "服务地址必须是绝对 URL。";
+            return;
+        }
+
+        _importQueueing = true;
+        try
+        {
+            var parameters = new DownloadJobParameters
+            {
+                ServerUrl = _importServerUrl.Trim(),
+                Username = _importUsername.Trim(),
+                Key = _importKey,
+                SourceBucket = _importSourceBucket.Trim(),
+                TargetBucket = _importTargetBucket,
+                DuplicateMode = _importDuplicateMode
+            };
+
+            var id = await JobQueue.EnqueueAsync(DownloadJob.Type, parameters, _importTargetBucket, _userId, _username);
+            _importQueuedId = id.ToString();
+        }
+        catch (Exception ex)
+        {
+            _modalError = ex.Message;
+        }
+        finally
+        {
+            _importQueueing = false;
+        }
+    }
+
+    // ── Delete ───────────────────────────────────────────────────────────────
+    private void RequestDeleteSingle(ExplorerItem item) { _deleteTarget = item; _deleteBatch = false; }
+    private void RequestDeleteSelected()
+    {
+        if (_selectedKeys.Count == 0) return;
+        _deleteTarget = new ExplorerItem { Key = "(batch)" };
+        _deleteBatch  = true;
+    }
+    private void CancelDelete() { _deleteTarget = null; _deleteBatch = false; _deleting = false; }
+
+    private async Task ConfirmDeleteAsync()
+    {
+        _deleting = true;
+        try
+        {
+            if (_deleteBatch)
+            {
+                foreach (var key in _selectedKeys.ToList())
+                {
+                    var batchItem = _items.FirstOrDefault(i => i.Key == key);
+                    if (batchItem is { IsObject: false, IsBucket: false })
+                        await DeletePrefixAsync(key);
+                    else
+                        await DeleteObjectAndPruneAsync(key);
+                }
+                _selectedKeys.Clear();
+            }
+            else if (_deleteTarget is not null)
+            {
+                if (_deleteTarget.IsBucket)
+                    await BucketSvc.DeleteBucketAsync(_deleteTarget.Key);
+                else if (_deleteTarget.IsObject)
+                    await DeleteObjectAndPruneAsync(_deleteTarget.Key);
+                else
+                    await DeletePrefixAsync(_deleteTarget.Key);
+            }
+            CancelDelete();
+            await OnParametersSetAsync();
+        }
+        catch (Exception ex) { _error = ex.Message; _deleting = false; }
+    }
+
+    private async Task DeleteObjectAndPruneAsync(string key)
+    {
+        await ObjectSvc.DeleteObjectAsync(new Models.Api.Objects.DeleteObjectRequest { Bucket = BucketName!, Key = key });
+
+        // After deleting, check if the parent folder (up to but not including the bucket root) is now empty
+        var slashIdx = key.LastIndexOf('/');
+        if (slashIdx <= 0) return; // no parent folder
+        var parentPrefix = key[..(slashIdx + 1)];
+        if (parentPrefix == CurrentPrefix) return; // don't prune the current view prefix
+
+        var checkReq  = new ListObjectsV2Request { Prefix = parentPrefix, MaxKeys = 1 };
+        var checkResp = await BucketSvc.ListObjectsV2Async(BucketName!, checkReq);
+        if (checkResp.Contents.Count == 0 && checkResp.CommonPrefixes.Count == 0)
+        {
+            // Folder is empty — nothing to delete (virtual folder, no placeholder object needed)
+            // The folder will automatically disappear from listings
+        }
+    }
+
+    private async Task DeletePrefixAsync(string prefix)
+    {
+        var req = new ListObjectsV2Request { Prefix = prefix, MaxKeys = 1000 };
+        ListObjectsV2Response? resp;
+        do
+        {
+            resp = await BucketSvc.ListObjectsV2Async(BucketName!, req);
+            foreach (var obj in resp.Contents)
+                await ObjectSvc.DeleteObjectAsync(new Models.Api.Objects.DeleteObjectRequest { Bucket = BucketName!, Key = obj.Key });
+            req.ContinuationToken = resp.NextContinuationToken;
+        } while (resp.IsTruncated);
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+    private CallerIdentity CallerIdentity() => new() { UserId = _userId, Username = _username, IsSuperAdmin = _isSuperAdmin };
+
+    private string BuildPresignedUrl(string bucket, string key)
+    {
+        if (_currentBucketPolicy?.IsPublicRead == true)
+            return BuildObjectUrl(bucket, key);
+
+        var token = Presigned.Create("GET", bucket, key, _userId, _username, _isSuperAdmin, expiresInSeconds: 3600);
+        return $"{BuildObjectUrl(bucket, key)}?X-Apiext-Fs-Presign={Uri.EscapeDataString(token.Token)}";
+    }
+
+    private static string BuildObjectUrl(string bucket, string key)
+        => $"/{Uri.EscapeDataString(bucket)}/{string.Join('/', key.Split('/').Select(Uri.EscapeDataString))}";
+
+    private static string AppendQuery(string url, string query)
+        => url.Contains('?', StringComparison.Ordinal) ? $"{url}&{query}" : $"{url}?{query}";
+
+    private static string AccessPolicyLabel(string accessPolicy)
+        => accessPolicy == BucketAccessPolicies.PublicRead
+            ? "公开读取"
+            : "私有";
+
+    private static string ItemIcon(ExplorerItem item)
+    {
+        if (item.IsBucket)  return "database";
+        if (!item.IsObject) return "folder";
+        return ContentIcon(item.ContentType);
+    }
+
+    private static string ItemIconClass(ExplorerItem item)
+    {
+        if (item.IsBucket) return "item-icon-bucket";
+        if (!item.IsObject) return "item-icon-folder";
+        if (item.ContentType.StartsWith("image/")) return "item-icon-image";
+        if (item.ContentType.StartsWith("video/") || item.ContentType.StartsWith("audio/")) return "item-icon-media";
+        if (item.ContentType.Contains("pdf")) return "item-icon-pdf";
+        return "item-icon-file";
+    }
+
+    private static string ContentIcon(string ct)
+    {
+        if (ct.StartsWith("image/"))  return "file-image";
+        if (ct.StartsWith("video/"))  return "video-camera";
+        if (ct.StartsWith("audio/"))  return "audio";
+        if (ct.Contains("pdf"))       return "file-pdf";
+        if (ct.Contains("zip") || ct.Contains("tar") || ct.Contains("gzip") || ct.Contains("7z")) return "file-zip";
+        if (ct.StartsWith("text/"))   return "file-text";
+        if (ct.Contains("json") || ct.Contains("xml") || ct.Contains("javascript")) return "file-code";
+        return "file";
+    }
+
+    private static string FormatSize(long bytes)
+    {
+        if (bytes == 0) return string.Empty;
+        string[] s = ["B", "KB", "MB", "GB", "TB"];
+        int i = 0; double v = bytes;
+        while (v >= 1024 && i < s.Length - 1) { v /= 1024; i++; }
+        return i == 0 ? $"{bytes} B" : $"{v:F1} {s[i]}";
+    }
+
+    private static string FormatDate(DateTime? dt) =>
+        dt.HasValue ? dt.Value.ToString("yyyy-MM-dd HH:mm") : string.Empty;
+
+    private static string StatusIcon(UploadStatus s) => s switch
+    {
+        UploadStatus.Pending   => "clock-circle",
+        UploadStatus.Uploading => "loading",
+        UploadStatus.Done      => "check-circle",
+        UploadStatus.Skipped   => "minus-circle",
+        UploadStatus.Error     => "close-circle",
+        _                      => "question-circle"
+    };
+
+    private static string StatusLabel(UploadStatus s) => s switch
+    {
+        UploadStatus.Pending   => "等待中",
+        UploadStatus.Uploading => "上传中…",
+        UploadStatus.Done      => "完成",
+        UploadStatus.Skipped   => "已跳过",
+        UploadStatus.Error     => "错误",
+        _                      => ""
+    };
+
+    private static string StatusClass(UploadStatus s) => s switch
+    {
+        UploadStatus.Done    => "status-done",
+        UploadStatus.Skipped => "status-skip",
+        UploadStatus.Error   => "status-error",
+        _                    => ""
+    };
+
+    // ── View-models ───────────────────────────────────────────────────────────
+    private sealed class ExplorerItem
+    {
+        public string    Key          { get; init; } = string.Empty;
+        public string    DisplayName  { get; set; }  = string.Empty;
+        public bool      IsObject     { get; init; }
+        public bool      IsBucket     { get; init; }
+        public long      Size         { get; init; }
+        public DateTime? Modified     { get; init; }
+        public string    ContentType  { get; init; } = string.Empty;
+        public string    ETag         { get; init; } = string.Empty;
+        public string?   StorageClass { get; init; }
+        public string    NavHref      { get; init; } = string.Empty;
+        public string    AccessPolicy { get; set; } = BucketAccessPolicies.Private;
+    }
+
+    private sealed class UploadEntry
+    {
+        public IBrowserFile? File         { get; init; }
+        public string        RelativePath { get; init; } = string.Empty;
+        public long          Size         { get; init; }
+        public string        ContentType  { get; init; } = string.Empty;
+        public UploadStatus  Status       { get; set; }  = UploadStatus.Pending;
+        public int           Progress     { get; set; }
+        public string?       ErrorDetail  { get; set; }
+    }
+
+    private enum UploadStatus  { Pending, Uploading, Done, Skipped, Error }
+    private enum OverwriteChoice { Overwrite, OverwriteAll, Skip, SkipAll }
+}

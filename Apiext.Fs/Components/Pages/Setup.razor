@@ -1,0 +1,102 @@
+@page "/_apiextfs/setup"
+@layout AuthLayout
+@using Microsoft.EntityFrameworkCore
+@inject IDbContextFactory<Apiext.Fs.Data.AppDbContext> DbFactory
+@inject IConfiguration Config
+@inject NavigationManager Nav
+
+@code {
+    [SupplyParameterFromQuery] public string? Error { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Setup only available when static account is disabled and no DB users exist
+        var staticAllowed = Config.GetValue<bool>("UseStaticAccount") && !string.IsNullOrEmpty(Config.GetValue<string?>("StaticUser"));
+        if (staticAllowed)
+        {
+            Nav.NavigateTo("/_apiextfs/login", replace: true);
+            return;
+        }
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        if (await db.Users.AnyAsync())
+            Nav.NavigateTo("/_apiextfs/login", replace: true);
+    }
+}
+
+<PageTitle>初始化设置 — Apiext.Fs</PageTitle>
+
+<div class="apiextfs-user-card">
+    <div class="apiextfs-user-form-title">创建管理员账号</div>
+    <div class="apiextfs-user-form-desc">当前还没有用户，请先创建第一个超级管理员账号。</div>
+
+    @if (Error == "empty")
+    {
+        <Alert Type="@AlertType.Error"
+               Message="用户名和密码不能为空。"
+               ShowIcon="true"
+               Class="apiextfs-user-alert" />
+    }
+    else if (Error == "mismatch")
+    {
+        <Alert Type="@AlertType.Error"
+               Message="两次输入的密码不一致。"
+               ShowIcon="true"
+               Class="apiextfs-user-alert" />
+    }
+
+    <form method="post" action="/_apiextfs/auth/setup" class="apiextfs-user-form" autocomplete="on">
+        <div class="apiextfs-user-field">
+            <label class="apiextfs-user-label" for="Username">用户名</label>
+            <span class="ant-input-affix-wrapper ant-input-affix-wrapper-lg">
+                <span class="ant-input-prefix">
+                    <Icon Type="user" Class="apiextfs-user-prefix-icon" />
+                </span>
+                <input id="Username"
+                       name="Username"
+                       type="text"
+                       class="ant-input ant-input-lg"
+                       autocomplete="username"
+                       required
+                       autofocus
+                       placeholder="请输入用户名" />
+            </span>
+        </div>
+
+        <div class="apiextfs-user-field">
+            <label class="apiextfs-user-label" for="Password">密码</label>
+            <span class="ant-input-affix-wrapper ant-input-affix-wrapper-lg">
+                <span class="ant-input-prefix">
+                    <Icon Type="lock" Class="apiextfs-user-prefix-icon" />
+                </span>
+                <input id="Password"
+                       name="Password"
+                       type="password"
+                       class="ant-input ant-input-lg"
+                       autocomplete="new-password"
+                       required
+                       placeholder="请输入密码" />
+            </span>
+        </div>
+
+        <div class="apiextfs-user-field">
+            <label class="apiextfs-user-label" for="Confirm">确认密码</label>
+            <span class="ant-input-affix-wrapper ant-input-affix-wrapper-lg">
+                <span class="ant-input-prefix">
+                    <Icon Type="safety-certificate" Class="apiextfs-user-prefix-icon" />
+                </span>
+                <input id="Confirm"
+                       name="Confirm"
+                       type="password"
+                       class="ant-input ant-input-lg"
+                       autocomplete="new-password"
+                       required
+                       placeholder="请再次输入密码" />
+            </span>
+        </div>
+
+        <button type="submit" class="ant-btn ant-btn-primary ant-btn-lg ant-btn-block apiextfs-user-submit">
+            创建账号
+        </button>
+    </form>
+</div>

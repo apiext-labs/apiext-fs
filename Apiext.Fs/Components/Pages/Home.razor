@@ -1,0 +1,11 @@
+@page "/_apiextfs"
+@layout AppLayout
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@inject NavigationManager Nav
+
+@code {
+    protected override void OnInitialized()
+    {
+        Nav.NavigateTo("/_apiextfs/buckets", replace: true);
+    }
+}

@@ -1,0 +1,344 @@
+name: publish-binaries
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Optional version tag override. Leave empty to use yyMMdd-HHmm.'
+        required: false
+        default: ''
+      create_release:
+        description: 'Create a GitHub Release and attach packages'
+        required: false
+        type: boolean
+        default: true
+      build_linux:
+        description: 'Build Linux packages'
+        required: false
+        type: boolean
+        default: true
+      build_windows:
+        description: 'Build Windows packages (portable zip + NSIS setup)'
+        required: false
+        type: boolean
+        default: true
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  PROJECT: Apiext.Fs/Apiext.Fs.csproj
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      release_tag: ${{ steps.version.outputs.release_tag }}
+    steps:
+      - name: Resolve version tag
+        id: version
+        shell: bash
+        run: |
+          if [ -n "${{ inputs.tag }}" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="$(date -u +%y%m%d-%H%M)"
+          fi
+
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "release_tag=v${TAG}" >> "$GITHUB_OUTPUT"
+          echo "Resolved version: ${TAG}"
+
+  publish-linux:
+    if: ${{ inputs.build_linux }}
+    needs: prepare
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rid: [linux-x64, linux-arm64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Publish Linux single-file
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ needs.prepare.outputs.tag }}"
+          RID="${{ matrix.rid }}"
+          ASSET="Apiext.Fs-${RID}-${TAG}"
+          OUT="publish/${ASSET}"
+          mkdir -p "${OUT}"
+
+          dotnet publish "${{ env.PROJECT }}" \
+            -c Release \
+            -r "${RID}" \
+            --self-contained true \
+            -o "${OUT}" \
+            /p:PublishSingleFile=true \
+            /p:IncludeNativeLibrariesForSelfExtract=true \
+            /p:EnableCompressionInSingleFile=true \
+            /p:PublishReadyToRun=true \
+            /p:DebugType=None \
+            /p:DebugSymbols=false \
+            /p:IncludeAllContentForSelfExtract=true
+
+          if [ -f "Apiext.Fs/appsettings.json" ]; then
+            cp "Apiext.Fs/appsettings.json" "${OUT}/"
+          fi
+
+          if [ ! -f "${OUT}/Apiext.Fs" ]; then
+            echo "Publish output missing Apiext.Fs binary" >&2
+            ls -la "${OUT}"
+            exit 1
+          fi
+          chmod +x "${OUT}/Apiext.Fs"
+
+          cat > "${OUT}/run.sh" <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          cd "$(dirname "$0")"
+          export ASPNETCORE_URLS="${ASPNETCORE_URLS:-http://0.0.0.0:8080}"
+          export ASPNETCORE_ENVIRONMENT="${ASPNETCORE_ENVIRONMENT:-Production}"
+          exec ./Apiext.Fs "$@"
+          EOF
+          # Strip accidental leading indentation from the heredoc body if any.
+          sed -i 's/^\s\+//' "${OUT}/run.sh"
+          chmod +x "${OUT}/run.sh"
+
+          cat > "${OUT}/apiext-fs.service" <<EOF
+          [Unit]
+          Description=Apiext.Fs S3-compatible file storage
+          After=network.target
+
+          [Service]
+          Type=notify
+          WorkingDirectory=/opt/apiext-fs
+          ExecStart=/opt/apiext-fs/Apiext.Fs
+          Restart=always
+          RestartSec=5
+          Environment=ASPNETCORE_URLS=http://0.0.0.0:8080
+          Environment=ASPNETCORE_ENVIRONMENT=Production
+
+          [Install]
+          WantedBy=multi-user.target
+          EOF
+          sed -i 's/^\s\+//' "${OUT}/apiext-fs.service"
+
+          cat > "${OUT}/README.txt" <<EOF
+          Apiext.Fs Linux package (${RID})
+          ================================
+
+          Run:
+            chmod +x Apiext.Fs run.sh
+            ./run.sh
+
+          Default:
+            - Listen: http://0.0.0.0:8080
+            - Web UI: /_apiextfs
+            - Data: ./App_Data (relative to working directory)
+
+          Optional systemd:
+            1. sudo mkdir -p /opt/apiext-fs
+            2. sudo cp -a . /opt/apiext-fs/
+            3. sudo cp apiext-fs.service /etc/systemd/system/
+            4. sudo systemctl daemon-reload
+            5. sudo systemctl enable --now apiext-fs
+
+          Version: ${TAG}
+          Runtime: ${RID} self-contained single-file
+          EOF
+
+          tar -C "publish" -czf "publish/${ASSET}.tar.gz" "${ASSET}"
+          ls -lh "publish/${ASSET}.tar.gz"
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Apiext.Fs-${{ matrix.rid }}-${{ needs.prepare.outputs.tag }}
+          path: publish/Apiext.Fs-${{ matrix.rid }}-${{ needs.prepare.outputs.tag }}.tar.gz
+          if-no-files-found: error
+
+  publish-windows:
+    if: ${{ inputs.build_windows }}
+    needs: prepare
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Publish Windows single-file
+        shell: pwsh
+        run: |
+          $tag = "${{ needs.prepare.outputs.tag }}"
+          $asset = "Apiext.Fs-win-x64-$tag"
+          $appDir = "publish/app"
+          New-Item -ItemType Directory -Force -Path $appDir | Out-Null
+
+          dotnet publish "${{ env.PROJECT }}" `
+            -c Release `
+            -r win-x64 `
+            --self-contained true `
+            -o $appDir `
+            /p:PublishSingleFile=true `
+            /p:IncludeNativeLibrariesForSelfExtract=true `
+            /p:EnableCompressionInSingleFile=true `
+            /p:PublishReadyToRun=true `
+            /p:DebugType=None `
+            /p:DebugSymbols=false `
+            /p:IncludeAllContentForSelfExtract=true
+
+          if (Test-Path "Apiext.Fs/appsettings.json") {
+            Copy-Item "Apiext.Fs/appsettings.json" -Destination $appDir -Force
+          }
+          if (Test-Path "installer/windows/appsettings.WindowsService.json") {
+            Copy-Item "installer/windows/appsettings.WindowsService.json" -Destination $appDir -Force
+          }
+
+          @"
+          Apiext.Fs Windows package
+          =========================
+
+          Portable (zip):
+            1. Extract anywhere
+            2. Run Apiext.Fs.exe (console)
+
+          Installer (Setup.exe / NSIS):
+            1. Run as Administrator
+            2. Default install: Program Files\Apiext.Fs
+            3. Optionally install as Windows Service (default)
+            4. Service name: ApiextFs
+            5. Listen: http://0.0.0.0:8080
+            6. Web UI: http://localhost:8080/_apiextfs
+
+          Service commands:
+            sc start ApiextFs
+            sc stop ApiextFs
+
+          Version: $tag
+          Runtime: win-x64 self-contained single-file
+          "@ | Set-Content -Path "$appDir/README.txt" -Encoding UTF8
+
+          if (-not (Test-Path "$appDir/Apiext.Fs.exe")) {
+            throw "Apiext.Fs.exe was not produced by publish."
+          }
+
+          Get-ChildItem $appDir | Format-Table Name, Length
+          "ASSET_BASE=$asset" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Create portable zip
+        shell: pwsh
+        run: |
+          $zip = "publish/$env:ASSET_BASE.zip"
+          if (Test-Path $zip) { Remove-Item $zip -Force }
+          Compress-Archive -Path "publish/app/*" -DestinationPath $zip -Force
+          Get-Item $zip | Format-List FullName, Length
+
+      - name: Install NSIS
+        shell: pwsh
+        run: |
+          choco install nsis -y --no-progress
+          $nsis = "C:\Program Files (x86)\NSIS\makensis.exe"
+          if (-not (Test-Path $nsis)) {
+            throw "makensis.exe not found after NSIS install."
+          }
+          & $nsis /VERSION
+
+      - name: Build NSIS installer
+        shell: pwsh
+        run: |
+          $tag = "${{ needs.prepare.outputs.tag }}"
+          $sourceDir = (Resolve-Path "publish/app").Path
+          $outFile = (Join-Path (Resolve-Path "publish").Path "$env:ASSET_BASE-Setup.exe")
+          $nsi = (Resolve-Path "installer/windows/apiext-fs.nsi").Path
+          $makensis = "C:\Program Files (x86)\NSIS\makensis.exe"
+
+          & $makensis `
+            "/DPRODUCT_VERSION=$tag" `
+            "/DSOURCE_DIR=$sourceDir" `
+            "/DOUTFILE=$outFile" `
+            $nsi
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "makensis failed with exit code $LASTEXITCODE"
+          }
+          if (-not (Test-Path $outFile)) {
+            throw "Installer was not created: $outFile"
+          }
+
+          Get-Item $outFile | Format-List FullName, Length
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Apiext.Fs-win-x64-${{ needs.prepare.outputs.tag }}
+          path: |
+            publish/Apiext.Fs-win-x64-${{ needs.prepare.outputs.tag }}.zip
+            publish/Apiext.Fs-win-x64-${{ needs.prepare.outputs.tag }}-Setup.exe
+          if-no-files-found: error
+
+  release:
+    if: ${{ always() && inputs.create_release && needs.prepare.result == 'success' && (needs.publish-linux.result == 'success' || needs.publish-windows.result == 'success') }}
+    needs: [prepare, publish-linux, publish-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: Apiext.Fs-*
+          merge-multiple: true
+
+      - name: Collect packages
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          find artifacts -type f \( -name '*.zip' -o -name '*.tar.gz' -o -name '*-Setup.exe' \) -print -exec cp -v {} dist/ \;
+          echo "Packages:"
+          ls -lah dist
+          test "$(find dist -type f | wc -l)" -gt 0
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare.outputs.release_tag }}
+          name: Release ${{ needs.prepare.outputs.tag }}
+          body: |
+            ## Apiext.Fs ${{ needs.prepare.outputs.tag }}
+
+            Self-contained runtime packages (no .NET install required).
+
+            ### Windows (`win-x64`)
+            - `Apiext.Fs-win-x64-${{ needs.prepare.outputs.tag }}-Setup.exe` — NSIS installer (optional Windows Service)
+            - `Apiext.Fs-win-x64-${{ needs.prepare.outputs.tag }}.zip` — portable
+
+            Service name: `ApiextFs` · default URL: http://localhost:8080/_apiextfs
+
+            ### Linux
+            - `Apiext.Fs-linux-x64-${{ needs.prepare.outputs.tag }}.tar.gz`
+            - `Apiext.Fs-linux-arm64-${{ needs.prepare.outputs.tag }}.tar.gz`
+
+            ```bash
+            tar -xzf Apiext.Fs-linux-x64-${{ needs.prepare.outputs.tag }}.tar.gz
+            cd Apiext.Fs-linux-x64-${{ needs.prepare.outputs.tag }}
+            ./run.sh
+            ```
+
+            Default listen: `http://0.0.0.0:8080` · Web UI: `/_apiextfs` · data: `./App_Data`
+          files: dist/*
+          fail_on_unmatched_files: true
+          generate_release_notes: false

@@ -1,0 +1,122 @@
+@page "/_apiextfs/jobs"
+@layout AppLayout
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@using System.Security.Claims
+@using Apiext.Fs.Models.Entities
+@using Apiext.Fs.Services.BackgroundJobs
+@inject IBackgroundJobHistoryService JobHistory
+
+<PageTitle>任务 — Apiext.Fs</PageTitle>
+
+@if (!_isSuperAdmin)
+{
+    <Result Status="ResultStatus.Http403"
+            Title="403"
+            SubTitle="你没有查看任务的权限。" />
+}
+else
+{
+    <PageContainer Title="任务">
+        <Breadcrumb>
+            <Breadcrumb>
+                <BreadcrumbItem>管理</BreadcrumbItem>
+                <BreadcrumbItem>任务</BreadcrumbItem>
+            </Breadcrumb>
+        </Breadcrumb>
+        <Content>
+            <AntDesign.Text Type="@TextElementType.Secondary">后台任务执行历史和状态。</AntDesign.Text>
+        </Content>
+        <Extra>
+            <Button Icon="reload" OnClick="LoadAsync" Loading="_loading">刷新</Button>
+        </Extra>
+        <ChildContent>
+            <Card>
+                <Table TItem="BackgroundJobRun"
+                       DataSource="_page.Items"
+                       Loading="_loading"
+                       PageSize="PageSize"
+                       Total="_page.TotalCount"
+                       PageIndex="_currentPage"
+                       OnPageIndexChange="OnPageIndexChange"
+                       RemoteDataSource
+                       Responsive>
+                    <Column TData="DateTime" Title="创建时间">
+                        @context.CreatedUtc.ToString("yyyy-MM-dd HH:mm:ss") UTC
+                    </Column>
+                    <Column TData="string" Title="类型">@context.JobType</Column>
+                    <Column TData="string" Title="状态">
+                        <Tag Color="@StatusColor(context.Status)">@context.Status</Tag>
+                    </Column>
+                    <Column TData="string" Title="Bucket">@context.TargetBucket</Column>
+                    <Column TData="string" Title="进度">
+                        @context.ProcessedItems / @context.TotalItems
+                    </Column>
+                    <Column TData="string" Title="统计">
+                        <div>成功：@context.SucceededItems</div>
+                        <div>跳过：@context.SkippedItems</div>
+                        <div>失败：@context.FailedItems</div>
+                        <div>字节：@FormatSize(context.BytesProcessed)</div>
+                    </Column>
+                    <Column TData="string" Title="错误">
+                        <span class="apiextfs-break-all">@context.Error</span>
+                    </Column>
+                </Table>
+            </Card>
+        </ChildContent>
+    </PageContainer>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthState { get; set; }
+
+    private const int PageSize = 20;
+    private bool _isSuperAdmin;
+    private bool _loading = true;
+    private int _currentPage = 1;
+    private BackgroundJobHistoryPage _page = new() { Page = 1, PageSize = PageSize };
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthState is not null)
+        {
+            var state = await AuthState;
+            _isSuperAdmin = state.User.FindFirstValue("is_super_admin") == "true";
+        }
+
+        if (_isSuperAdmin)
+            await LoadAsync();
+        else
+            _loading = false;
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _page = await JobHistory.GetPageAsync(_currentPage, PageSize);
+        _loading = false;
+    }
+
+    private async Task OnPageIndexChange(PaginationEventArgs args)
+    {
+        _currentPage = args.Page;
+        await LoadAsync();
+    }
+
+    private static string StatusColor(string status) => status switch
+    {
+        "Completed" => "success",
+        "Running"   => "processing",
+        "Queued"    => "default",
+        "Failed"    => "error",
+        _           => "default"
+    };
+
+    private static string FormatSize(long bytes)
+    {
+        if (bytes == 0) return "0 B";
+        string[] s = ["B", "KB", "MB", "GB", "TB"];
+        int i = 0; double v = bytes;
+        while (v >= 1024 && i < s.Length - 1) { v /= 1024; i++; }
+        return i == 0 ? $"{bytes} B" : $"{v:F1} {s[i]}";
+    }
+}
