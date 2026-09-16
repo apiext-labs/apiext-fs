@@ -328,12 +328,18 @@
        OnOk="CreateBucketAsync"
        OnCancel="_ => CloseAddBucket()"
        OkText="@("创建")"
-       CancelText="@("取消")">
+       CancelText="@("取消")"
+       ConfirmLoading="_creatingBucket"
+       MaskClosable="false">
     @if (_modalError is not null)
     {
         <Alert Type="@AlertType.Error" Message="@_modalError" ShowIcon="true" Class="apiextfs-mb-2" />
     }
-    <Input @bind-Value="_modalName" Placeholder="my-bucket" OnPressEnter="CreateBucketAsync" />
+    <Input @bind-Value="_modalName"
+           BindOnInput="true"
+           Disabled="_creatingBucket"
+           Placeholder="my-bucket"
+           OnPressEnter="CreateBucketAsync" />
 </Modal>
 
 <!-- ── Create folder modal ───────────────────────────────────────── -->
@@ -667,6 +673,7 @@
 
     // ── Add bucket modal ─────────────────────────────────────────────────────
     private bool    _showAddBucket;
+    private bool    _creatingBucket;
 
     // ── Create folder modal ──────────────────────────────────────────────────
     private bool    _showCreateFolder;
@@ -1031,8 +1038,23 @@
     }
 
     // ── Add bucket ───────────────────────────────────────────────────────────
-    private void OpenAddBucket()  { _modalName = string.Empty; _modalError = null; _showAddBucket = true; }
-    private void CloseAddBucket() { _showAddBucket = false; }
+    private void OpenAddBucket()
+    {
+        if (!_isSuperAdmin || _creatingBucket)
+            return;
+
+        _modalName = string.Empty;
+        _modalError = null;
+        _showAddBucket = true;
+    }
+
+    private void CloseAddBucket()
+    {
+        if (_creatingBucket)
+            return;
+
+        _showAddBucket = false;
+    }
 
     private async Task OnAddBucketKeyDown(KeyboardEventArgs e)
     {
@@ -1042,6 +1064,9 @@
 
     private async Task CreateBucketAsync()
     {
+        if (!_isSuperAdmin || _creatingBucket)
+            return;
+
         _modalError = null;
         var name = _modalName.Trim();
         if (string.IsNullOrEmpty(name))
@@ -1049,13 +1074,16 @@
             _modalError = "Bucket 名称不能为空。";
             return;
         }
+
+        _creatingBucket = true;
         try
         {
             await BucketSvc.CreateBucketAsync(name, region: null, ownerId: _userId);
-            CloseAddBucket();
-            await OnParametersSetAsync();
+            _showAddBucket = false;
+            await LoadBucketsAsync();
         }
         catch (Exception ex) { _modalError = ex.Message; }
+        finally { _creatingBucket = false; }
     }
 
     // ── Create folder ────────────────────────────────────────────────────────

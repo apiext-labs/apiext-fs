@@ -9,6 +9,7 @@ RUN dotnet restore "./Apiext.Fs/Apiext.Fs.csproj"
 COPY . .
 WORKDIR "/src/Apiext.Fs"
 RUN dotnet build "./Apiext.Fs.csproj" -c $BUILD_CONFIGURATION -o /app/build
+RUN mkdir -p /app/container-data
 
 # This stage is used to publish the service project to be copied to the final stage
 FROM build AS publish
@@ -17,19 +18,24 @@ RUN dotnet publish "./Apiext.Fs.csproj" -c $BUILD_CONFIGURATION -o /app/publish 
 
 # This stage is used in production or when running from VS in regular mode
 FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble-chiseled-extra AS final
-USER $APP_UID
 EXPOSE 8080
 EXPOSE 8081
 
 LABEL name="Apiext.Fs" \
       summary="Apiext.Fs is a self-hosted, S3-compatible file storage server built with ASP.NET Core that stores objects on the local filesystem and contains user and web management."
 
-ENV UseStaticAccount=true \
+ENV ASPNETCORE_HTTP_PORTS=8080 \
+    ASPNETCORE_FORWARDEDHEADERS_ENABLED=true \
+    StoreLocation=/datastore \
+    ConnectionStrings__DefaultConnection="Data Source=/datastore/apiext-fs.db" \
+    DataProtection__KeysPath=/datastore/.data-protection \
+    UseStaticAccount=true \
     StaticUser="" \
     StaticPassword=""
 
-WORKDIR /datastore
 WORKDIR /app
-VOLUME ["/datastore"]
 COPY --from=publish /app/publish .
+COPY --from=build --chown=$APP_UID:$APP_UID /app/container-data/ /datastore/
+VOLUME ["/datastore"]
+USER $APP_UID
 ENTRYPOINT ["dotnet", "Apiext.Fs.dll"]

@@ -117,7 +117,12 @@ namespace Apiext.Fs
 
             // Keep authentication cookies decryptable when the host account or container changes.
             // The storage directory must be protected with the same permissions as the database.
-            var keyDirectory = Path.Combine(builder.Environment.ContentRootPath, ".data-protection");
+            var configuredKeyDirectory = builder.Configuration["DataProtection:KeysPath"];
+            var keyDirectory = string.IsNullOrWhiteSpace(configuredKeyDirectory)
+                ? Path.Combine(builder.Environment.ContentRootPath, ".data-protection")
+                : Path.IsPathFullyQualified(configuredKeyDirectory)
+                    ? Path.GetFullPath(configuredKeyDirectory)
+                    : Path.GetFullPath(configuredKeyDirectory, builder.Environment.ContentRootPath);
             Directory.CreateDirectory(keyDirectory);
             builder.Services.AddDataProtection()
                 .SetApplicationName("Apiext.Fs")

@@ -1,0 +1,25 @@
+services:
+  apiext-fs:
+    image: ${APIEXT_FS_IMAGE:-apiext-fs:local}
+    build:
+      context: .
+      dockerfile: Apiext.Fs/Dockerfile
+    container_name: apiext-fs
+    restart: unless-stopped
+    ports:
+      - "${APIEXT_FS_PORT:-9000}:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_HTTP_PORTS: 8080
+      ASPNETCORE_FORWARDEDHEADERS_ENABLED: "true"
+      StoreLocation: /datastore
+      ConnectionStrings__DefaultConnection: "Data Source=/datastore/apiext-fs.db"
+      DataProtection__KeysPath: /datastore/.data-protection
+      UseStaticAccount: "true"
+      StaticUser: "${APIEXT_FS_USER:-iouser}"
+      StaticPassword: "${APIEXT_FS_PASSWORD:-iopassword}"
+    volumes:
+      - apiext-fs-data:/datastore
+
+volumes:
+  apiext-fs-data:

@@ -48,6 +48,36 @@ docker run -d \
 - Web 后台：`http://localhost:9000/_apiextfs`
 - S3 Endpoint：`http://localhost:9000`
 
+也可以直接使用仓库中的 Compose 配置：
+
+```bash
+docker compose up -d --build
+```
+
+Compose 默认使用 `apiext-fs-data` 命名卷，并把对象文件、SQLite 数据库和
+Data Protection 密钥统一持久化到容器内的 `/datastore`。端口和静态账号可通过环境变量覆盖：
+
+```bash
+APIEXT_FS_PORT=9000 \
+APIEXT_FS_USER=iouser \
+APIEXT_FS_PASSWORD=change-me \
+docker compose up -d --build
+```
+
+如果需要把数据直接保存到仓库旁的宿主机目录，可将 `docker-compose.yml` 中的卷改为：
+
+```yaml
+volumes:
+  - ./data:/datastore
+```
+
+Linux 上使用 bind mount 前，需要确保目录可由镜像内的应用用户（默认 UID `1654`）写入：
+
+```bash
+mkdir -p data
+sudo chown -R 1654:1654 data
+```
+
 > GHCR 镜像名由仓库决定，格式通常是 `ghcr.io/用户名或组织名/仓库名:标签`。如果包默认是私有的，需要在 GitHub Packages 里把包权限调整为可访问。
 
 ## 配置项
@@ -61,6 +91,7 @@ docker run -d \
 | `StaticPassword` | 空 | 静态账号密码，同时作为 S3 Secret Access Key。 |
 | `StoreLocation` | `/datastore` | Bucket 和对象文件的存储根目录。 |
 | `ConnectionStrings__DefaultConnection` | `Data Source={StoreLocation}/apiext.fs.db` | SQLite 数据库连接字符串。 |
+| `DataProtection__KeysPath` | 容器内为 `/datastore/.data-protection` | 登录 Cookie 加密密钥目录，容器部署时必须持久化。 |
 | `S3__BaseHost` | 空 | 可选。启用 virtual-hosted-style 请求改写，例如 `bucket.s3.example.com/key`。 |
 
 示例：
