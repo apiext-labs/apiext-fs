@@ -54,8 +54,20 @@ docker run -d \
 docker compose up -d --build
 ```
 
-Compose 默认使用 `apiext-fs-data` 命名卷，并把对象文件、SQLite 数据库和
-Data Protection 密钥统一持久化到容器内的 `/datastore`。端口和静态账号可通过环境变量覆盖：
+Compose 使用两个独立命名卷，应用数据不会进入 Bucket 服务的根目录：
+
+```text
+/datastore/                    # apiext-fs-data 卷，只存放 Bucket
+└── <bucket-name>/
+
+/appdata/                      # apiext-fs-app 卷，只存放 SQLite
+└── apiext-fs.db
+```
+
+Data Protection 使用进程内临时密钥，不创建密钥目录。应用进程重启后，已有的
+网页登录 Cookie 会失效，需要重新登录。
+
+端口和静态账号可通过环境变量覆盖：
 
 ```bash
 APIEXT_FS_PORT=9000 \
@@ -69,13 +81,23 @@ docker compose up -d --build
 ```yaml
 volumes:
   - ./data:/datastore
+  - ./app:/appdata
 ```
 
 Linux 上使用 bind mount 前，需要确保目录可由镜像内的应用用户（默认 UID `1654`）写入：
 
 ```bash
-mkdir -p data
-sudo chown -R 1654:1654 data
+mkdir -p data app
+sudo chown -R 1654:1654 data app
+```
+
+如果使用上述 bind mount，从旧版容器升级时，请在停止容器后将原有应用数据
+移到 `./app`，Bucket 目录继续留在 `./data`：
+
+```bash
+mkdir -p app
+mv data/apiext-fs.db data/apiext-fs.db-shm data/apiext-fs.db-wal app/ 2>/dev/null || true
+sudo chown -R 1654:1654 data app
 ```
 
 > GHCR 镜像名由仓库决定，格式通常是 `ghcr.io/用户名或组织名/仓库名:标签`。如果包默认是私有的，需要在 GitHub Packages 里把包权限调整为可访问。
@@ -89,9 +111,8 @@ sudo chown -R 1654:1654 data
 | `UseStaticAccount` | `true` | 是否启用静态单账号。 |
 | `StaticUser` | 空 | 静态账号用户名，同时作为 S3 Access Key ID。 |
 | `StaticPassword` | 空 | 静态账号密码，同时作为 S3 Secret Access Key。 |
-| `StoreLocation` | `/datastore` | Bucket 和对象文件的存储根目录。 |
-| `ConnectionStrings__DefaultConnection` | `Data Source={StoreLocation}/apiext.fs.db` | SQLite 数据库连接字符串。 |
-| `DataProtection__KeysPath` | 容器内为 `/datastore/.data-protection` | 登录 Cookie 加密密钥目录，容器部署时必须持久化。 |
+| `StoreLocation` | 容器内为 `/datastore` | Bucket 和对象文件的存储根目录。 |
+| `ConnectionStrings__DefaultConnection` | 容器内为 `Data Source=/appdata/apiext-fs.db` | SQLite 数据库连接字符串。 |
 | `S3__BaseHost` | 空 | 可选。启用 virtual-hosted-style 请求改写，例如 `bucket.s3.example.com/key`。 |
 
 示例：

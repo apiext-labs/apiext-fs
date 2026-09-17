@@ -25,6 +25,11 @@ public sealed class FileSystemBucketService : IS3BucketService
 
     private string BucketPath(string bucket) => Path.Combine(_root, bucket);
 
+    // Directories prefixed with a dot are reserved for application metadata
+    // stored alongside the buckets (for example, Data Protection keys).
+    private static bool IsInternalDirectory(DirectoryInfo directory)
+        => directory.Name.StartsWith(".", StringComparison.Ordinal);
+
     private static S3Owner OwnerFor(string ownerId) => new() { Id = ownerId, DisplayName = ownerId };
 
     // ── ListBuckets ───────────────────────────────────────────────────────────
@@ -33,6 +38,7 @@ public sealed class FileSystemBucketService : IS3BucketService
     {
         var buckets = new DirectoryInfo(_root)
             .GetDirectories()
+            .Where(d => !IsInternalDirectory(d))
             .Select(d => new BucketEntry
             {
                 Name = d.Name,

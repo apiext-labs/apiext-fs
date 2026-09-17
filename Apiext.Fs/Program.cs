@@ -115,18 +115,11 @@ namespace Apiext.Fs
             builder.Services.AddDbContext<AppDbContext>(options => options.UseSqlite(connectionString));
             builder.Services.AddDbContextFactory<AppDbContext>(options => options.UseSqlite(connectionString), ServiceLifetime.Scoped);
 
-            // Keep authentication cookies decryptable when the host account or container changes.
-            // The storage directory must be protected with the same permissions as the database.
-            var configuredKeyDirectory = builder.Configuration["DataProtection:KeysPath"];
-            var keyDirectory = string.IsNullOrWhiteSpace(configuredKeyDirectory)
-                ? Path.Combine(builder.Environment.ContentRootPath, ".data-protection")
-                : Path.IsPathFullyQualified(configuredKeyDirectory)
-                    ? Path.GetFullPath(configuredKeyDirectory)
-                    : Path.GetFullPath(configuredKeyDirectory, builder.Environment.ContentRootPath);
-            Directory.CreateDirectory(keyDirectory);
+            // Authentication cookies use process-local ephemeral keys. Restarting the
+            // application invalidates existing sessions but creates no key directory.
             builder.Services.AddDataProtection()
                 .SetApplicationName("Apiext.Fs")
-                .PersistKeysToFileSystem(new DirectoryInfo(keyDirectory));
+                .UseEphemeralDataProtectionProvider();
 
             var app = builder.Build();
 

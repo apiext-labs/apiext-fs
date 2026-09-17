@@ -27,8 +27,7 @@ LABEL name="Apiext.Fs" \
 ENV ASPNETCORE_HTTP_PORTS=8080 \
     ASPNETCORE_FORWARDEDHEADERS_ENABLED=true \
     StoreLocation=/datastore \
-    ConnectionStrings__DefaultConnection="Data Source=/datastore/apiext-fs.db" \
-    DataProtection__KeysPath=/datastore/.data-protection \
+    ConnectionStrings__DefaultConnection="Data Source=/appdata/apiext-fs.db" \
     UseStaticAccount=true \
     StaticUser="" \
     StaticPassword=""
@@ -36,6 +35,7 @@ ENV ASPNETCORE_HTTP_PORTS=8080 \
 WORKDIR /app
 COPY --from=publish /app/publish .
 COPY --from=build --chown=$APP_UID:$APP_UID /app/container-data/ /datastore/
-VOLUME ["/datastore"]
+COPY --from=build --chown=$APP_UID:$APP_UID /app/container-data/ /appdata/
+VOLUME ["/datastore", "/appdata"]
 USER $APP_UID
 ENTRYPOINT ["dotnet", "Apiext.Fs.dll"]

@@ -13,13 +13,14 @@ services:
       ASPNETCORE_HTTP_PORTS: 8080
       ASPNETCORE_FORWARDEDHEADERS_ENABLED: "true"
       StoreLocation: /datastore
-      ConnectionStrings__DefaultConnection: "Data Source=/datastore/apiext-fs.db"
-      DataProtection__KeysPath: /datastore/.data-protection
+      ConnectionStrings__DefaultConnection: "Data Source=/appdata/apiext-fs.db"
       UseStaticAccount: "true"
       StaticUser: "${APIEXT_FS_USER:-iouser}"
       StaticPassword: "${APIEXT_FS_PASSWORD:-iopassword}"
     volumes:
       - apiext-fs-data:/datastore
+      - apiext-fs-app:/appdata
 
 volumes:
   apiext-fs-data:
+  apiext-fs-app:

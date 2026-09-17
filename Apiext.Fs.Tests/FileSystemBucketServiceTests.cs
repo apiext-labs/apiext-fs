@@ -37,6 +37,18 @@ public sealed class FileSystemBucketServiceTests : IDisposable
         Assert.All(result.Buckets, b => Assert.False(string.IsNullOrEmpty(b.CreationDate)));
     }
 
+    [Fact]
+    public async Task ListBucketsAsync_InternalDirectories_AreNotReturnedAsBuckets()
+    {
+        _tmp.Sub("visible-bucket");
+        _tmp.Sub(".internal-metadata");
+
+        var result = await _sut.ListBucketsAsync("user1", TestContext.Current.CancellationToken);
+
+        var bucket = Assert.Single(result.Buckets);
+        Assert.Equal("visible-bucket", bucket.Name);
+    }
+
     // ── CreateBucket ──────────────────────────────────────────────────────────
 
     [Fact]
