@@ -364,7 +364,7 @@
                 else if (!_detail.IsBucket)
                 {
                     <SpaceItem>
-                        <Button Type="@ButtonType.Primary" Icon="folder-open" Block Href="@_detail.NavHref">打开文件夹</Button>
+                        <Button Type="@ButtonType.Primary" Icon="folder-open" Block OnClick="OpenDetail">打开文件夹</Button>
                     </SpaceItem>
                     @if (_canDelete)
                     {
@@ -376,7 +376,7 @@
                 else
                 {
                     <SpaceItem>
-                        <Button Type="@ButtonType.Primary" Icon="folder-open" Block Href="@_detail.NavHref">打开 Bucket</Button>
+                        <Button Type="@ButtonType.Primary" Icon="folder-open" Block OnClick="OpenDetail">打开 Bucket</Button>
                     </SpaceItem>
                     @if (_isSuperAdmin)
                     {
@@ -1241,6 +1241,13 @@
     }
 
     private FilePreviewModal? _previewModal;
+
+    /// <summary>Navigates the detail panel's "open" action (folder or bucket).</summary>
+    private void OpenDetail()
+    {
+        if (_detail is not null)
+            Nav.NavigateTo(_detail.NavHref);
+    }
 
     private void OpenItem(ExplorerItem item)
     {

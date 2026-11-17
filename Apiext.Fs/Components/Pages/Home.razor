@@ -1,11 +1,253 @@
 @page "/_apiextfs"
 @layout AppLayout
 @attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@using System.Security.Claims
+@using AntDesign.ProLayout
+@using Apiext.Fs.Models.Entities
+@using Apiext.Fs.Services.BackgroundJobs
+@inject IStorageStatsService StatsService
+@inject IUserManagementService UserMgmt
+@inject IAuthorizationProvider Authz
+@inject IBackgroundJobHistoryService JobHistory
 @inject NavigationManager Nav
 
+<PageTitle>概览 — Apiext.Fs</PageTitle>
+
+<PageContainer Title="概览">
+    <Content>
+        <AntDesign.Text Type="@TextElementType.Secondary">存储使用情况与常用入口。</AntDesign.Text>
+    </Content>
+    <Extra>
+        <Button Icon="reload" Loading="_loading" OnClick="RefreshAsync">刷新</Button>
+    </Extra>
+    <ChildContent>
+        <Row Gutter="16">
+            <AntDesign.Col Xs="24" Sm="12" Xl="6">
+                <Card Class="apiextfs-stat-card">
+                    <Statistic Title="Buckets" Value="@_stats.BucketCount" />
+                </Card>
+            </AntDesign.Col>
+            <AntDesign.Col Xs="24" Sm="12" Xl="6">
+                <Card Class="apiextfs-stat-card">
+                    <Statistic Title="对象数量" Value="@_stats.ObjectCount" />
+                </Card>
+            </AntDesign.Col>
+            <AntDesign.Col Xs="24" Sm="12" Xl="6">
+                <Card Class="apiextfs-stat-card">
+                    <Statistic Title="占用空间" Value="@SizeText" />
+                </Card>
+            </AntDesign.Col>
+            <AntDesign.Col Xs="24" Sm="12" Xl="6">
+                <Card Class="apiextfs-stat-card">
+                    @if (_isSuperAdmin && !_isStaticAccount)
+                    {
+                        <Statistic Title="用户数量" Value="@_userCount" />
+                    }
+                    else
+                    {
+                        <Statistic Title="最近更新" Value="@LastModifiedText" />
+                    }
+                </Card>
+            </AntDesign.Col>
+        </Row>
+
+        <Row Gutter="16" Class="apiextfs-mt-3">
+            <AntDesign.Col Xs="24" Xl="16">
+                <Card Title="Bucket 用量" Class="apiextfs-mb-3">
+                    <Extra>
+                        <Button Size="@ButtonSize.Small" Icon="plus" OnClick="OpenBuckets">新建 Bucket</Button>
+                    </Extra>
+                    <ChildContent>
+                        <Table TItem="BucketStats"
+                               DataSource="_visibleBuckets"
+                               Loading="_loading"
+                               HidePagination
+                               Responsive>
+                            <Column TData="string" Title="Bucket">
+                                <Button Type="@ButtonType.Link" Class="apiextfs-bucket-link"
+                                        OnClick="() => OpenBucket(context.Name)">@context.Name</Button>
+                            </Column>
+                            <Column TData="long" Title="对象" Align="ColumnAlign.Right">
+                                @context.ObjectCount.ToString("N0")
+                            </Column>
+                            <Column TData="long" Title="容量" Align="ColumnAlign.Right">
+                                @FormatSize(context.TotalBytes)
+                            </Column>
+                            <Column TData="string" Title="最近更新" Align="ColumnAlign.Right">
+                                @FormatTime(context.LastModifiedUtc)
+                            </Column>
+                        </Table>
+                    </ChildContent>
+                </Card>
+
+                @if (_isSuperAdmin && !_isStaticAccount)
+                {
+                    <Card Title="最近任务" Class="apiextfs-mb-3">
+                        <Table TItem="BackgroundJobRun"
+                               DataSource="_recentJobs"
+                               Loading="_loading"
+                               HidePagination
+                               Responsive>
+                            <Column TData="string" Title="类型">@context.JobType</Column>
+                            <Column TData="string" Title="状态">
+                                <Tag Color="@StatusColor(context.Status)">@context.Status</Tag>
+                            </Column>
+                            <Column TData="string" Title="创建时间" Align="ColumnAlign.Right">
+                                @context.CreatedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")
+                            </Column>
+                        </Table>
+                    </Card>
+                }
+            </AntDesign.Col>
+
+            <AntDesign.Col Xs="24" Xl="8">
+                <Card Title="快捷操作">
+                    <Button Block Icon="folder-open" Class="apiextfs-quick-action"
+                            OnClick="OpenBuckets">文件浏览</Button>
+                    <Button Block Icon="api" Class="apiextfs-quick-action"
+                            OnClick="OpenCredentials">API 密钥</Button>
+                    @if (_isSuperAdmin)
+                    {
+                        <Button Block Icon="team" Class="apiextfs-quick-action"
+                                OnClick="OpenUsers">用户管理</Button>
+                        <Button Block Icon="history" Class="apiextfs-quick-action"
+                                OnClick="OpenJobs">后台任务</Button>
+                    }
+                    <Button Block Icon="user" Class="apiextfs-quick-action"
+                            OnClick="OpenProfile">个人资料</Button>
+                </Card>
+
+                <Card Title="签名信息" Class="apiextfs-mt-3">
+                    <Descriptions Column="1" Size="@DescriptionsSize.Small">
+                        <DescriptionsItem Title="端点">@_endpoint</DescriptionsItem>
+                        <DescriptionsItem Title="区域">us-east-1</DescriptionsItem>
+                        <DescriptionsItem Title="签名版本">SigV4 / SigV2</DescriptionsItem>
+                        <DescriptionsItem Title="路径风格">已启用</DescriptionsItem>
+                    </Descriptions>
+                </Card>
+            </AntDesign.Col>
+        </Row>
+    </ChildContent>
+</PageContainer>
+
 @code {
-    protected override void OnInitialized()
+    [CascadingParameter] private Task<AuthenticationState>? AuthState { get; set; }
+
+    private StorageStats _stats = new();
+    private IReadOnlyList<BucketStats> _visibleBuckets = [];
+    private int _userCount;
+    private bool _isSuperAdmin;
+    private bool _isStaticAccount;
+    private bool _loading = true;
+    private string _endpoint = string.Empty;
+    private IReadOnlyList<BackgroundJobRun> _recentJobs = [];
+
+    private string SizeText => FormatSize(_stats.TotalBytes);
+
+    private string LastModifiedText
+        => _stats.LastModifiedUtc is { } utc ? utc.ToLocalTime().ToString("yyyy-MM-dd HH:mm") : "—";
+
+    protected override async Task OnInitializedAsync()
     {
-        Nav.NavigateTo("/_apiextfs/buckets", replace: true);
+        _endpoint = new Uri(Nav.BaseUri).GetLeftPart(UriPartial.Authority);
+        await LoadAsync(forceRefresh: false);
     }
+
+    // The toolbar button bypasses the stats cache; normal navigation uses it.
+    private Task RefreshAsync() => LoadAsync(forceRefresh: true);
+
+    private async Task LoadAsync(bool forceRefresh)
+    {
+        if (AuthState is null) return;
+
+        var state = await AuthState;
+        var idClaim = state.User.FindFirstValue(ClaimTypes.NameIdentifier);
+        var identity = new CallerIdentity
+        {
+            UserId = idClaim ?? string.Empty,
+            Username = state.User.FindFirstValue(ClaimTypes.Name) ?? string.Empty,
+            IsSuperAdmin = state.User.FindFirstValue("is_super_admin") == "true"
+        };
+
+        _isSuperAdmin = identity.IsSuperAdmin;
+        _isStaticAccount = idClaim == "static-admin";
+
+        _loading = true;
+        try
+        {
+            _stats = forceRefresh
+                ? await StatsService.RefreshAsync()
+                : await StatsService.GetAsync();
+
+            if (_isSuperAdmin)
+            {
+                _visibleBuckets = _stats.Buckets;
+            }
+            else
+            {
+                var allowed = new List<BucketStats>();
+                foreach (var bucket in _stats.Buckets)
+                {
+                    var access = await Authz.CheckAccessAsync(identity, bucket.Name, BucketPermission.Read);
+                    if (access == AclCheckResult.Allowed)
+                        allowed.Add(bucket);
+                }
+                _visibleBuckets = allowed;
+            }
+
+            if (_isSuperAdmin && !_isStaticAccount)
+            {
+                var users = await UserMgmt.GetAllAsync();
+                _userCount = users.Count;
+
+                var page = await JobHistory.GetPageAsync(1, 5);
+                _recentJobs = page.Items;
+            }
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void OpenBucket(string name) => Nav.NavigateTo($"/_apiextfs/buckets/{name}");
+    private void OpenBuckets() => Nav.NavigateTo("/_apiextfs/buckets");
+    private void OpenCredentials() => Nav.NavigateTo("/_apiextfs/credentials");
+    private void OpenUsers() => Nav.NavigateTo("/_apiextfs/users");
+    private void OpenJobs() => Nav.NavigateTo("/_apiextfs/jobs");
+    private void OpenProfile() => Nav.NavigateTo("/_apiextfs/profile");
+
+    private static (double value, string unit) FormatSizeParts(long bytes)
+    {
+        if (bytes <= 0) return (0, "B");
+
+        string[] units = ["B", "KB", "MB", "GB", "TB", "PB"];
+        int i = 0;
+        double value = bytes;
+        while (value >= 1024 && i < units.Length - 1)
+        {
+            value /= 1024;
+            i++;
+        }
+
+        return (i == 0 ? bytes : Math.Round(value, 1), units[i]);
+    }
+
+    private static string FormatSize(long bytes)
+    {
+        var (value, unit) = FormatSizeParts(bytes);
+        return unit == "B" ? $"{bytes} B" : $"{value:0.#} {unit}";
+    }
+
+    private static string StatusColor(string status) => status switch
+    {
+        "Completed" => "success",
+        "Running" => "processing",
+        "Queued" => "default",
+        "Failed" => "error",
+        _ => "default"
+    };
+
+    private static string FormatTime(DateTime? utc)
+        => utc is null ? "—" : utc.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
 }

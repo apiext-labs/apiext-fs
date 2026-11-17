@@ -1,28 +1,34 @@
 @page "/_apiextfs/Error"
 @using System.Diagnostics
+@inject NavigationManager Nav
 
-<PageTitle>错误</PageTitle>
+<PageTitle>错误 — Apiext.Fs</PageTitle>
 
-<h1 class="text-danger">错误</h1>
-<h2 class="text-danger">处理请求时发生错误。</h2>
-
-@if (ShowRequestId)
-{
-    <p>
-        <strong>请求 ID：</strong> <code>@RequestId</code>
-    </p>
-}
-
-<h3>开发模式</h3>
-<p>
-    切换到 <strong>Development</strong> 环境可以显示更详细的错误信息。
-</p>
-<p>
-    <strong>已部署应用不应启用 Development 环境。</strong>
-    这可能会把异常中的敏感信息展示给最终用户。
-    本地调试时，可以将 <strong>ASPNETCORE_ENVIRONMENT</strong> 环境变量设置为 <strong>Development</strong> 来启用 <strong>Development</strong> 环境
-    ，然后重启应用。
-</p>
+<div class="apiextfs-result-center">
+    <Result Status="@ResultStatus.Error"
+            Title="处理请求时发生错误"
+            SubTitle="服务器在处理该请求时抛出异常，请稍后重试或联系管理员。">
+        <Extra>
+            <Button Type="@ButtonType.Primary" OnClick="GoHome">返回概览</Button>
+        </Extra>
+        <ChildContent>
+            <div class="apiextfs-error-note">
+                <Alert Type="@AlertType.Info"
+                       ShowIcon="true"
+                       Message="开发模式可显示详细错误信息"
+                       Description="在 Development 环境下运行可看到完整异常堆栈；已部署环境请勿启用，避免向最终用户泄露敏感信息。" />
+                @if (ShowRequestId)
+                {
+                    <div class="apiextfs-error-request-id">
+                        <AntDesign.Text Type="@TextElementType.Secondary">
+                            请求 ID：<AntDesign.Text Code>@RequestId</AntDesign.Text>
+                        </AntDesign.Text>
+                    </div>
+                }
+            </div>
+        </ChildContent>
+    </Result>
+</div>
 
 @code{
     [CascadingParameter]
@@ -33,4 +39,6 @@
 
     protected override void OnInitialized() =>
         RequestId = Activity.Current?.Id ?? HttpContext?.TraceIdentifier;
+
+    private void GoHome() => Nav.NavigateTo("/_apiextfs");
 }

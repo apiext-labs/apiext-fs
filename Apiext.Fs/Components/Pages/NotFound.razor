@@ -1,5 +1,6 @@
 @page "/not-found"
 @layout MainLayout
+@inject NavigationManager Nav
 
 <PageTitle>未找到 — Apiext.Fs</PageTitle>
 
@@ -8,7 +9,11 @@
             Title="404"
             SubTitle="抱歉，你访问的内容不存在。">
         <Extra>
-            <Button Type="@ButtonType.Primary" Href="/_apiextfs/buckets">返回首页</Button>
+            <Button Type="@ButtonType.Primary" OnClick="GoHome">返回概览</Button>
         </Extra>
     </Result>
 </div>
+
+@code {
+    private void GoHome() => Nav.NavigateTo("/_apiextfs");
+}

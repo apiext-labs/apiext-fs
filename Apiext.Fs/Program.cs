@@ -94,6 +94,10 @@ namespace Apiext.Fs
             builder.Services.AddSingleton<IS3BucketService, FileSystemBucketService>();
             builder.Services.AddSingleton<IS3ObjectService, FileSystemObjectService>();
             builder.Services.AddSingleton<IS3MultipartService, FileSystemMultipartService>();
+
+            // Dashboard aggregates (scan of the store directory)
+            builder.Services.AddSingleton<IStorageStatsService, StorageStatsService>();
+
             builder.Services.AddHttpClient();
 
             // Background jobs

@@ -125,7 +125,10 @@
 
         // ProLayout submenu parents with Children only expand/collapse and do not navigate.
         // Keep a dedicated leaf item so /_apiextfs/buckets remains reachable.
-        var menu = new List<MenuDataItem>();
+        var menu = new List<MenuDataItem>
+        {
+            new() { Path = "/_apiextfs", Name = "概览", Key = "dashboard", Icon = "dashboard" }
+        };
         if (bucketChildren.Count == 0)
         {
             menu.Add(new MenuDataItem

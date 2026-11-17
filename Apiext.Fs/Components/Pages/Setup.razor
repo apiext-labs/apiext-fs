@@ -22,6 +22,30 @@
         if (await db.Users.AnyAsync())
             Nav.NavigateTo("/_apiextfs/login", replace: true);
     }
+
+    // The form is a plain HTML POST (/_apiextfs/auth/setup) so the server can create
+    // the first account and redirect. AntDesign inputs do not expose form attributes,
+    // so name/id/required are forwarded through their unmatched-attribute bag.
+    private static readonly Dictionary<string, object> _usernameAttrs = new()
+    {
+        ["id"] = "Username",
+        ["name"] = "Username",
+        ["required"] = true
+    };
+
+    private static readonly Dictionary<string, object> _passwordAttrs = new()
+    {
+        ["id"] = "Password",
+        ["name"] = "Password",
+        ["required"] = true
+    };
+
+    private static readonly Dictionary<string, object> _confirmAttrs = new()
+    {
+        ["id"] = "Confirm",
+        ["name"] = "Confirm",
+        ["required"] = true
+    };
 }
 
 <PageTitle>初始化设置 — Apiext.Fs</PageTitle>
@@ -48,55 +72,29 @@
     <form method="post" action="/_apiextfs/auth/setup" class="apiextfs-user-form" autocomplete="on">
         <div class="apiextfs-user-field">
             <label class="apiextfs-user-label" for="Username">用户名</label>
-            <span class="ant-input-affix-wrapper ant-input-affix-wrapper-lg">
-                <span class="ant-input-prefix">
-                    <Icon Type="user" Class="apiextfs-user-prefix-icon" />
-                </span>
-                <input id="Username"
-                       name="Username"
-                       type="text"
-                       class="ant-input ant-input-lg"
-                       autocomplete="username"
-                       required
-                       autofocus
-                       placeholder="请输入用户名" />
-            </span>
+            <Input TValue="string"
+                   @attributes="_usernameAttrs"
+                   Placeholder="请输入用户名"
+                   AutoFocus />
         </div>
 
         <div class="apiextfs-user-field">
             <label class="apiextfs-user-label" for="Password">密码</label>
-            <span class="ant-input-affix-wrapper ant-input-affix-wrapper-lg">
-                <span class="ant-input-prefix">
-                    <Icon Type="lock" Class="apiextfs-user-prefix-icon" />
-                </span>
-                <input id="Password"
-                       name="Password"
-                       type="password"
-                       class="ant-input ant-input-lg"
-                       autocomplete="new-password"
-                       required
-                       placeholder="请输入密码" />
-            </span>
+            <InputPassword @attributes="_passwordAttrs"
+                           Placeholder="请输入密码" />
         </div>
 
         <div class="apiextfs-user-field">
             <label class="apiextfs-user-label" for="Confirm">确认密码</label>
-            <span class="ant-input-affix-wrapper ant-input-affix-wrapper-lg">
-                <span class="ant-input-prefix">
-                    <Icon Type="safety-certificate" Class="apiextfs-user-prefix-icon" />
-                </span>
-                <input id="Confirm"
-                       name="Confirm"
-                       type="password"
-                       class="ant-input ant-input-lg"
-                       autocomplete="new-password"
-                       required
-                       placeholder="请再次输入密码" />
-            </span>
+            <InputPassword @attributes="_confirmAttrs"
+                           Placeholder="请再次输入密码" />
         </div>
 
-        <button type="submit" class="ant-btn ant-btn-primary ant-btn-lg ant-btn-block apiextfs-user-submit">
+        <Button Type="@ButtonType.Primary"
+                HtmlType="submit"
+                Block
+                Class="apiextfs-user-submit">
             创建账号
-        </button>
+        </Button>
     </form>
 </div>
