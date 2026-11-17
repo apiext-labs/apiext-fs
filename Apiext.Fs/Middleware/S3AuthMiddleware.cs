@@ -459,6 +459,9 @@ public sealed class S3AuthMiddleware
             return true;
 
         var path = request.Path.Value ?? string.Empty;
+        // Static UI assets all live under /_assets (see AGENTS.md §5.4).
+        // Keep this list short: put new static files under wwwroot/_assets instead of
+        // adding more prefixes here.
         return path.StartsWith("/_apiextfs", StringComparison.OrdinalIgnoreCase)
             || path.StartsWith("/_assets", StringComparison.OrdinalIgnoreCase)
             || path.StartsWith("/_framework", StringComparison.OrdinalIgnoreCase)

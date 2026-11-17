@@ -6,8 +6,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <base href="/" />
     <ResourcePreloader />
-    <link rel="stylesheet" href="_content/AntDesign/css/ant-design-blazor.css" />
+    <link rel="stylesheet" href="_content/AntDesign/css/ant-design-blazor.variable.css" />
     <link rel="stylesheet" href="_content/AntDesign.ProLayout/css/ant-design-pro-layout-blazor.css" />
+    <!-- Theme overrides: --ant-primary-* tokens on top of ant-design-blazor.variable.css -->
+    <link rel="stylesheet" href="/_assets/theme.css" />
     <!-- App overrides last (auth shell, console tweaks, helpers) -->
     <link rel="stylesheet" href="@Assets["Apiext.Fs.styles.css"]" />
     <link rel="stylesheet" href="@Assets["_assets/apiextfs-antd.css"]" />
@@ -39,6 +41,44 @@
         window.apiextfsClick = function (selector) {
             var el = document.querySelector(selector);
             if (el) el.click();
+        };
+
+        // Login page posts credentials as a real form so the server can set the
+        // auth cookie; the interactive page only drives the UI.
+        window.apiextfsSubmitLogin = function (username, password, returnUrl) {
+            var form = document.createElement('form');
+            form.method = 'post';
+            form.action = '/_apiextfs/auth/login';
+            form.style.display = 'none';
+
+            var fields = { Username: username, Password: password, ReturnUrl: returnUrl || '' };
+            Object.keys(fields).forEach(function (name) {
+                var input = document.createElement('input');
+                input.type = 'hidden';
+                input.name = name;
+                input.value = fields[name];
+                form.appendChild(input);
+            });
+
+            document.body.appendChild(form);
+            form.submit();
+        };
+
+        // Clipboard copy with a legacy fallback for non-secure (http) contexts,
+        // where navigator.clipboard is unavailable.
+        window.apiextfsCopy = function (text) {
+            if (navigator.clipboard && window.isSecureContext) {
+                return navigator.clipboard.writeText(text);
+            }
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); } catch (e) { console.warn('copy failed', e); }
+            document.body.removeChild(ta);
+            return Promise.resolve();
         };
 
         window.apiextfsDownloadZip = function (bucket, keys, zipName) {

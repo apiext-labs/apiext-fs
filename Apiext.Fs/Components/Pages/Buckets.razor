@@ -7,6 +7,7 @@
 @using Apiext.Fs.Models.Api.Buckets
 @using Apiext.Fs.Models.Entities
 @using Apiext.Fs.Services.BackgroundJobs
+@using MimeKit
 @using Microsoft.AspNetCore.Components.Forms
 @inject IS3BucketService BucketSvc
 @inject IS3ObjectService ObjectSvc
@@ -65,7 +66,27 @@
     <div class="apiextfs-bucket-toolbar">
         <Space Wrap>
             <SpaceItem>
-                <Search Placeholder="搜索文件或文件夹…" @bind-Value="_search" Style="width:260px" AllowClear />
+                <Search Placeholder="搜索当前列表…" @bind-Value="_search" Style="width:240px" AllowClear />
+            </SpaceItem>
+            @if (_items.Count > 1)
+            {
+                <SpaceItem>
+                    <Select TItemValue="string" TItem="string" @bind-Value="_sortMode" Style="width:132px">
+                        <SelectOptions>
+                            <SelectOption TItemValue="string" TItem="string" Value="@("name-asc")" Label="名称 A→Z" />
+                            <SelectOption TItemValue="string" TItem="string" Value="@("name-desc")" Label="名称 Z→A" />
+                            <SelectOption TItemValue="string" TItem="string" Value="@("time-desc")" Label="最新优先" />
+                            <SelectOption TItemValue="string" TItem="string" Value="@("time-asc")" Label="最早优先" />
+                            <SelectOption TItemValue="string" TItem="string" Value="@("size-desc")" Label="大小 大→小" />
+                            <SelectOption TItemValue="string" TItem="string" Value="@("size-asc")" Label="大小 小→大" />
+                        </SelectOptions>
+                    </Select>
+                </SpaceItem>
+            }
+            <SpaceItem>
+                <Tooltip Title="@("刷新")">
+                    <Button Icon="reload" Loading="_refreshing" OnClick="RefreshAsync" />
+                </Tooltip>
             </SpaceItem>
             <SpaceItem>
                 <AntDesign.Text Type="@TextElementType.Secondary" Class="apiextfs-item-count">
@@ -73,6 +94,10 @@
                     @if (_selectedKeys.Count > 0)
                     {
                         <span> · 已选 @_selectedKeys.Count</span>
+                    }
+                    @if (_truncated)
+                    {
+                        <span> · 仅显示前 @_items.Count 项</span>
                     }
                 </AntDesign.Text>
             </SpaceItem>
@@ -99,12 +124,12 @@
                     <Button Type="@ButtonType.Primary" Icon="upload" OnClick="OpenUpload">上传</Button>
                 </SpaceItem>
             }
-            @if (_selectedKeys.Count > 0)
+            @if (_selectedKeys.Count > 0 && BucketName is not null)
             {
                 <SpaceItem>
                     <Button Icon="file-zip" OnClick="DownloadZipAsync">下载 Zip（@_selectedKeys.Count）</Button>
                 </SpaceItem>
-                @if (BucketName is not null)
+                @if (_canDelete)
                 {
                     <SpaceItem>
                         <Button Danger Icon="delete" OnClick="RequestDeleteSelected">删除（@_selectedKeys.Count）</Button>
@@ -159,8 +184,10 @@
         {
             <Table TItem="ExplorerItem"
                    DataSource="_visibleItems"
-                   Loading="_loading"
-                   HidePagination
+                   Loading="_loading || _refreshing"
+                   PageSize="_pageSize"
+                   HidePagination="_visibleItems.Count <= _pageSize"
+                   PaginationPosition="bottomRight"
                    Size="@TableSize.Middle"
                    OnRowClick="OnRowClick"
                    OnRow="GetRowAttributes"
@@ -190,14 +217,14 @@
                        @onclick="() => OpenItem(context)">@context.DisplayName</a>
                 </Column>
                 <Column TData="long" Title="大小" Width="120">
-                    <span class="apiextfs-item-meta">@FormatSize(context.Size)</span>
+                    <span class="apiextfs-item-meta">@(context.IsObject ? FormatSize(context.Size) : "—")</span>
                 </Column>
                 <Column TData="DateTime?" Title="修改时间" Width="170">
                     <span class="apiextfs-item-meta">@FormatDate(context.Modified)</span>
                 </Column>
-                <ActionColumn Title="操作" Width="120" Align="ColumnAlign.Right">
+                <ActionColumn Title="操作" Width="200" Align="ColumnAlign.Right">
                     <span @onclick:stopPropagation="true" class="apiextfs-row-actions">
-                        <Space>
+                        <Space Size="@("0")">
                             @if (context.IsObject)
                             {
                                 <SpaceItem>
@@ -205,6 +232,19 @@
                                         <Button Type="@ButtonType.Text" Icon="download" OnClick="() => DownloadAsync(context)" />
                                     </Tooltip>
                                 </SpaceItem>
+                                <SpaceItem>
+                                    <Tooltip Title="@("获取链接")">
+                                        <Button Type="@ButtonType.Text" Icon="link" OnClick="() => OpenLinkModal(context)" />
+                                    </Tooltip>
+                                </SpaceItem>
+                                @if (_canAdd || _canUpdate)
+                                {
+                                    <SpaceItem>
+                                        <Tooltip Title="@("重命名 / 移动")">
+                                            <Button Type="@ButtonType.Text" Icon="edit" OnClick="() => OpenRename(context)" />
+                                        </Tooltip>
+                                    </SpaceItem>
+                                }
                                 @if (_canDelete)
                                 {
                                     <SpaceItem>
@@ -214,13 +254,48 @@
                                     </SpaceItem>
                                 }
                             }
-                            else if (!context.IsBucket && _canDelete)
+                            else if (context.IsBucket)
                             {
                                 <SpaceItem>
-                                    <Tooltip Title="@("删除")">
-                                        <Button Type="@ButtonType.Text" Danger Icon="delete" OnClick="() => RequestDeleteSingle(context)" />
+                                    <Tooltip Title="@("打开")">
+                                        <Button Type="@ButtonType.Text" Icon="folder-open"
+                                                OnClick="() => OpenItem(context)" />
                                     </Tooltip>
                                 </SpaceItem>
+                                <SpaceItem>
+                                    <Tooltip Title="@("复制 S3 路径")">
+                                        <Button Type="@ButtonType.Text" Icon="link" OnClick="() => CopyBucketPathAsync(context)" />
+                                    </Tooltip>
+                                </SpaceItem>
+                                @if (_isSuperAdmin)
+                                {
+                                    <SpaceItem>
+                                        <Tooltip Title="@("设置")">
+                                            <Button Type="@ButtonType.Text" Icon="setting" OnClick="() => OpenBucketSettings(context.Key, context.AccessPolicy)" />
+                                        </Tooltip>
+                                    </SpaceItem>
+                                    <SpaceItem>
+                                        <Tooltip Title="@("删除 Bucket")">
+                                            <Button Type="@ButtonType.Text" Danger Icon="delete" OnClick="() => RequestDeleteSingle(context)" />
+                                        </Tooltip>
+                                    </SpaceItem>
+                                }
+                            }
+                            else
+                            {
+                                <SpaceItem>
+                                    <Tooltip Title="@("打开")">
+                                        <Button Type="@ButtonType.Text" Icon="folder-open" OnClick="() => OpenItem(context)" />
+                                    </Tooltip>
+                                </SpaceItem>
+                                @if (_canDelete)
+                                {
+                                    <SpaceItem>
+                                        <Tooltip Title="@("删除文件夹")">
+                                            <Button Type="@ButtonType.Text" Danger Icon="delete" OnClick="() => RequestDeleteSingle(context)" />
+                                        </Tooltip>
+                                    </SpaceItem>
+                                }
                             }
                         </Space>
                     </span>
@@ -270,6 +345,15 @@
                     <SpaceItem>
                         <Button Type="@ButtonType.Primary" Icon="download" Block OnClick="() => DownloadAsync(_detail)">下载</Button>
                     </SpaceItem>
+                    <SpaceItem>
+                        <Button Icon="link" Block OnClick="() => OpenLinkModal(_detail)">获取链接</Button>
+                    </SpaceItem>
+                    @if (_canAdd || _canUpdate)
+                    {
+                        <SpaceItem>
+                            <Button Icon="edit" Block OnClick="() => OpenRename(_detail)">重命名 / 移动</Button>
+                        </SpaceItem>
+                    }
                     @if (_canDelete)
                     {
                         <SpaceItem>
@@ -438,14 +522,35 @@
                 {
                     <text>上传完成</text>
                 }
+                else if (_uploadCancelled)
+                {
+                    <text>正在取消…</text>
+                }
                 else
                 {
                     <text>正在上传…</text>
                 }
             </span>
-            <span class="apiextfs-upload-progress-meta">
-                @_uploadQueue.Count(f => f.Status is UploadStatus.Done) / @_uploadQueue.Count
-            </span>
+            <Space Size="@("12")">
+                <SpaceItem>
+                    <span class="apiextfs-upload-progress-meta">
+                        @_uploadQueue.Count(f => f.Status is UploadStatus.Done) / @_uploadQueue.Count
+                    </span>
+                </SpaceItem>
+                @if (!_uploadDone)
+                {
+                    <SpaceItem>
+                        <Button Type="@ButtonType.Text"
+                                Danger
+                                Size="@ButtonSize.Small"
+                                Icon="close-circle"
+                                Disabled="_uploadCancelled"
+                                OnClick="CancelUpload">
+                            取消上传
+                        </Button>
+                    </SpaceItem>
+                }
+            </Space>
         </div>
 
         <div class="upload-file-list">
@@ -602,6 +707,97 @@
 </Modal>
 
 <!-- ══════════════════════════════════════════════════════════════════
+     Download link modal (permanent vs temporary)
+══════════════════════════════════════════════════════════════════ -->
+<Modal Title="获取下载链接"
+       Visible="_linkTarget is not null"
+       OnCancel="CloseLinkModal"
+       Footer="null"
+       Width="640"
+       MaskClosable="false">
+    @if (_linkTarget is not null)
+    {
+        <div class="apiextfs-link-head">
+            <Icon Type="@ItemIcon(_linkTarget)" Class="@ItemIconClass(_linkTarget)" />
+            <AntDesign.Text Strong Class="apiextfs-link-key">@_linkTarget.Key</AntDesign.Text>
+        </div>
+
+        <div class="apiextfs-field-block apiextfs-link-section">
+            <label class="apiextfs-field-label">永久地址（公开直连）</label>
+            <div class="apiextfs-link-row">
+                <Input Value="@_linkPermanentUrl" ReadOnly />
+                <Button Icon="copy" OnClick="CopyPermanentLinkAsync">复制</Button>
+            </div>
+            @if (_currentBucketPolicy?.IsPublicRead == true)
+            {
+                <AntDesign.Text Type="@TextElementType.Secondary" Class="apiextfs-link-hint">
+                    当前 Bucket 为「公开读取」：匿名即可访问，地址长期有效。
+                </AntDesign.Text>
+            }
+            else
+            {
+                <AntDesign.Text Type="@TextElementType.Secondary" Class="apiextfs-link-hint">
+                    当前 Bucket 为「私有」：此地址需要携带凭据访问；如需匿名分享请使用下方临时地址。
+                </AntDesign.Text>
+            }
+        </div>
+
+        <div class="apiextfs-field-block">
+            <label class="apiextfs-field-label">临时地址（预签名）</label>
+            <div class="apiextfs-link-row">
+                <Input Value="@_linkTempUrl" ReadOnly />
+                <Select TItemValue="int" TItem="int"
+                        Value="_linkExpirySeconds"
+                        ValueChanged="OnLinkExpiryChanged"
+                        Style="width:112px;flex:none">
+                    <SelectOptions>
+                        <SelectOption TItemValue="int" TItem="int" Value="@(3600)" Label="1 小时" />
+                        <SelectOption TItemValue="int" TItem="int" Value="@(86400)" Label="24 小时" />
+                        <SelectOption TItemValue="int" TItem="int" Value="@(604800)" Label="7 天" />
+                    </SelectOptions>
+                </Select>
+                <Button Type="@ButtonType.Primary" Icon="copy" OnClick="CopyTempLinkAsync">复制</Button>
+            </div>
+            <AntDesign.Text Type="@TextElementType.Secondary" Class="apiextfs-link-hint">
+                到期自动失效；服务重启后所有已生成的临时链接失效。
+            </AntDesign.Text>
+        </div>
+
+        <div class="apiextfs-modal-footer">
+            <Button OnClick="CloseLinkModal">关闭</Button>
+        </div>
+    }
+</Modal>
+
+<!-- ══════════════════════════════════════════════════════════════════
+     Rename / move modal
+══════════════════════════════════════════════════════════════════ -->
+<Modal Title="重命名 / 移动"
+       Visible="_renameTarget is not null"
+       OnOk="ConfirmRenameAsync"
+       OnCancel="CloseRename"
+       OkText="@("保存")"
+       CancelText="@("取消")"
+       ConfirmLoading="_renaming"
+       MaskClosable="false">
+    @if (_renameError is not null)
+    {
+        <Alert Type="@AlertType.Error" Message="@_renameError" ShowIcon="true" Class="apiextfs-mb-2" />
+    }
+    <div class="apiextfs-field-block">
+        <label class="apiextfs-field-label">新名称或路径</label>
+        <Input @bind-Value="_renameValue"
+               BindOnInput="true"
+               Disabled="_renaming"
+               Placeholder="new-name.txt 或 sub/folder/new-name.txt"
+               OnPressEnter="ConfirmRenameAsync" />
+        <AntDesign.Text Type="@TextElementType.Secondary" Style="font-size:12px">
+            直接改名即可；输入 <AntDesign.Text Code>path/to/new.txt</AntDesign.Text> 可移动到当前 Bucket 内的其他位置。
+        </AntDesign.Text>
+    </div>
+</Modal>
+
+<!-- ══════════════════════════════════════════════════════════════════
      Bucket settings modal
 ══════════════════════════════════════════════════════════════════ -->
 <Modal Title="Bucket 设置"
@@ -671,6 +867,25 @@
     private ExplorerItem?      _detail;
     private List<(string Seg, string Href)> _breadcrumbs = [];
 
+    // Paging / sorting (client-side over the loaded listing)
+    private const int MaxListPages = 50; // 50k objects safeguard for one folder
+    private int    _pageSize   = 50;
+    private string _sortMode   = "name-asc";
+    private bool   _refreshing;
+    private bool   _truncated;
+
+    // Rename / move
+    private ExplorerItem? _renameTarget;
+    private string        _renameValue = string.Empty;
+    private bool          _renaming;
+    private string?       _renameError;
+
+    // Download link modal (permanent + temporary)
+    private ExplorerItem? _linkTarget;
+    private string?       _linkPermanentUrl;
+    private string?       _linkTempUrl;
+    private int           _linkExpirySeconds = 3600;
+
     // ── Add bucket modal ─────────────────────────────────────────────────────
     private bool    _showAddBucket;
     private bool    _creatingBucket;
@@ -691,6 +906,8 @@
     private bool                 _showUpload;
     private bool                 _uploading;
     private bool                 _uploadDone;
+    private bool                 _uploadCancelled;
+    private CancellationTokenSource? _uploadCts;
     private List<UploadEntry>    _uploadQueue  = [];
     private List<string>         _skippedFiles = [];
     private UploadEntry?         _overwriteFile;
@@ -710,10 +927,31 @@
     private string  _importDuplicateMode = DownloadDuplicateModes.Overwrite;
 
     // ── Computed ─────────────────────────────────────────────────────────────
-    private List<ExplorerItem> _visibleItems =>
-        string.IsNullOrWhiteSpace(_search)
-            ? _items
-            : _items.Where(i => i.DisplayName.Contains(_search, StringComparison.OrdinalIgnoreCase)).ToList();
+    private List<ExplorerItem> _visibleItems
+    {
+        get
+        {
+            IEnumerable<ExplorerItem> query = _items;
+            if (!string.IsNullOrWhiteSpace(_search))
+                query = query.Where(i => i.DisplayName.Contains(_search, StringComparison.OrdinalIgnoreCase));
+
+            // Folders are listed before files, then ordered by the selected key.
+            var foldersFirst = query.OrderBy(i => i.IsObject ? 1 : 0);
+            return (_sortMode switch
+            {
+                "name-desc" => foldersFirst.ThenByDescending(i => i.DisplayName, StringComparer.OrdinalIgnoreCase),
+                "size-desc" => foldersFirst.ThenByDescending(i => i.Size)
+                                         .ThenBy(i => i.DisplayName, StringComparer.OrdinalIgnoreCase),
+                "size-asc"  => foldersFirst.ThenBy(i => i.Size)
+                                         .ThenBy(i => i.DisplayName, StringComparer.OrdinalIgnoreCase),
+                "time-desc" => foldersFirst.ThenByDescending(i => i.Modified ?? DateTime.MinValue)
+                                         .ThenBy(i => i.DisplayName, StringComparer.OrdinalIgnoreCase),
+                "time-asc"  => foldersFirst.ThenBy(i => i.Modified ?? DateTime.MinValue)
+                                         .ThenBy(i => i.DisplayName, StringComparer.OrdinalIgnoreCase),
+                _           => foldersFirst.ThenBy(i => i.DisplayName, StringComparer.OrdinalIgnoreCase)
+            }).ToList();
+        }
+    }
 
     private string CurrentPrefix => string.IsNullOrEmpty(Prefix) ? ""
         : (Prefix.EndsWith('/') ? Prefix : Prefix + "/");
@@ -821,56 +1059,74 @@
         _canUpdate = identity.IsSuperAdmin || (await Authz.CheckAccessAsync(identity, BucketName!, BucketPermission.Update)) == AclCheckResult.Allowed;
 
         var prefix = CurrentPrefix;
-        var req    = new ListObjectsV2Request { Prefix = prefix, Delimiter = "/", MaxKeys = 1000 };
-        var resp   = await BucketSvc.ListObjectsV2Async(BucketName!, req);
-
         var list = new List<ExplorerItem>();
+        var seenFolders = new HashSet<string>(StringComparer.Ordinal);
+        string? token = null;
+        var pages = 0;
+        _truncated = false;
 
-        foreach (var cp in resp.CommonPrefixes)
+        // Follow continuation tokens so folders holding more than 1000 objects
+        // are listed completely instead of being silently truncated.
+        do
         {
-            var folderKey = cp.Prefix;
-            var display   = folderKey.TrimEnd('/');
-            if (!string.IsNullOrEmpty(prefix)) display = display[prefix.Length..];
-            list.Add(new ExplorerItem
+            var resp = await BucketSvc.ListObjectsV2Async(BucketName!, new ListObjectsV2Request
             {
-                Key         = folderKey,
-                DisplayName = display,
-                IsObject    = false,
-                IsBucket    = false,
-                NavHref     = $"/_apiextfs/buckets/{BucketName}/{folderKey}"
+                Prefix = prefix,
+                Delimiter = "/",
+                MaxKeys = 1000,
+                ContinuationToken = token
             });
-        }
 
-        foreach (var obj in resp.Contents)
-        {
-            if (obj.Key == prefix) continue;
-            var displayName = obj.Key;
-            if (!string.IsNullOrEmpty(prefix) && displayName.StartsWith(prefix))
-                displayName = displayName[prefix.Length..];
-
-            string contentType = "application/octet-stream", etag = obj.ETag;
-            string? storageClass = obj.StorageClass;
-            try
+            foreach (var cp in resp.CommonPrefixes)
             {
-                var head = await ObjectSvc.HeadObjectAsync(new Models.Api.Objects.GetObjectRequest { Bucket = BucketName!, Key = obj.Key });
-                if (head is not null) { contentType = head.ContentType; etag = head.ETag; storageClass = head.StorageClass; }
+                if (!seenFolders.Add(cp.Prefix)) continue;
+                var display = cp.Prefix.TrimEnd('/');
+                if (!string.IsNullOrEmpty(prefix)) display = display[prefix.Length..];
+                list.Add(new ExplorerItem
+                {
+                    Key         = cp.Prefix,
+                    DisplayName = display,
+                    IsObject    = false,
+                    IsBucket    = false,
+                    NavHref     = $"/_apiextfs/buckets/{BucketName}/{cp.Prefix}"
+                });
             }
-            catch { /* best effort */ }
 
-            list.Add(new ExplorerItem
+            foreach (var obj in resp.Contents)
             {
-                Key          = obj.Key,
-                DisplayName  = displayName,
-                IsObject     = true,
-                Size         = obj.Size,
-                Modified     = DateTime.TryParse(obj.LastModified, out var dt) ? dt.ToUniversalTime() : null,
-                ContentType  = contentType,
-                ETag         = etag,
-                StorageClass = storageClass
-            });
-        }
+                if (obj.Key == prefix) continue;
+                var displayName = obj.Key;
+                if (!string.IsNullOrEmpty(prefix) && displayName.StartsWith(prefix))
+                    displayName = displayName[prefix.Length..];
 
-        _items = list.OrderBy(i => i.DisplayName, StringComparer.OrdinalIgnoreCase).ToList();
+                list.Add(new ExplorerItem
+                {
+                    Key          = obj.Key,
+                    DisplayName  = displayName,
+                    IsObject     = true,
+                    Size         = obj.Size,
+                    Modified     = DateTime.TryParse(obj.LastModified, out var dt) ? dt.ToUniversalTime() : null,
+                    // ListObjects already carries size/ETag; deriving the content type
+                    // from the extension avoids one HeadObject per row (N+1).
+                    ContentType  = GuessContentType(obj.Key),
+                    ETag         = obj.ETag,
+                    StorageClass = obj.StorageClass
+                });
+            }
+
+            token = resp.IsTruncated ? resp.NextContinuationToken : null;
+            pages++;
+        }
+        while (token is not null && pages < MaxListPages);
+
+        _truncated = token is not null;
+        _items = list;
+    }
+
+    private static string GuessContentType(string key)
+    {
+        try { return MimeTypes.GetMimeType(key); }
+        catch { return "application/octet-stream"; }
     }
 
     // ── Selection ────────────────────────────────────────────────────────────
@@ -972,6 +1228,7 @@
                 _detail.AccessPolicy = requested;
 
             _showBucketSettings = false;
+            Message.Success("访问策略已更新");
         }
         catch (Exception ex)
         {
@@ -1081,6 +1338,7 @@
             await BucketSvc.CreateBucketAsync(name, region: null, ownerId: _userId);
             _showAddBucket = false;
             await LoadBucketsAsync();
+            Message.Success($"Bucket {name} 已创建");
         }
         catch (Exception ex) { _modalError = ex.Message; }
         finally { _creatingBucket = false; }
@@ -1220,6 +1478,8 @@
         _skippedFiles = [];
         _uploading    = false;
         _uploadDone   = false;
+        _uploadCancelled = false;
+        _uploadCts    = null;
         _overwriteFile = null;
         _overwriteTcs  = null;
         _overwriteAll  = false;
@@ -1257,9 +1517,13 @@
     {
         _uploading    = true;
         _uploadDone   = false;
+        _uploadCancelled = false;
         _overwriteAll = false;
         _skipAll      = false;
         _skippedFiles = [];
+
+        using var cts = new CancellationTokenSource();
+        _uploadCts = cts;
 
         // Pre-fetch all existing keys under current prefix once
         var existingKeys = new HashSet<string>();
@@ -1278,6 +1542,14 @@
 
         foreach (var entry in _uploadQueue)
         {
+            if (cts.IsCancellationRequested)
+            {
+                entry.Status = UploadStatus.Skipped;
+                entry.ErrorDetail = "已取消";
+                StateHasChanged();
+                continue;
+            }
+
             var objectKey = CurrentPrefix + entry.RelativePath;
 
             if (existingKeys.Contains(objectKey))
@@ -1329,15 +1601,30 @@
             try
             {
                 await using var stream = entry.File!.OpenReadStream(maxAllowedSize: 2L * 1024 * 1024 * 1024);
+
+                // Wrap the browser stream so the modal can show real progress
+                // while PutObjectAsync copies the payload.
+                await using var progressStream = new ProgressStream(stream, entry.Size, read =>
+                {
+                    entry.Progress = (int)Math.Clamp(read * 100 / Math.Max(entry.Size, 1), 0, 100);
+                    _ = InvokeAsync(StateHasChanged);
+                });
+
                 var req = new Models.Api.Objects.PutObjectRequest
                 {
                     Bucket      = BucketName!,
                     Key         = objectKey,
                     ContentType = entry.ContentType
                 };
-                await ObjectSvc.PutObjectAsync(req, stream);
+                await ObjectSvc.PutObjectAsync(req, progressStream, cts.Token);
                 entry.Status   = UploadStatus.Done;
                 entry.Progress = 100;
+            }
+            catch (OperationCanceledException)
+            {
+                entry.Status      = UploadStatus.Error;
+                entry.ErrorDetail = "已取消";
+                entry.Progress    = 0;
             }
             catch (Exception ex)
             {
@@ -1349,6 +1636,25 @@
         }
 
         _uploadDone = true;
+        _uploadCts  = null;
+        StateHasChanged();
+
+        var done    = _uploadQueue.Count(e => e.Status is UploadStatus.Done);
+        var failed  = _uploadQueue.Count(e => e.Status is UploadStatus.Error);
+        var skipped = _uploadQueue.Count(e => e.Status is UploadStatus.Skipped);
+
+        if (failed == 0)
+            Message.Success($"上传完成：成功 {done} 个" + (skipped > 0 ? $"，跳过 {skipped} 个" : string.Empty));
+        else
+            Message.Warning($"上传结束：成功 {done}，失败 {failed}，跳过 {skipped}");
+
+        await OnParametersSetAsync();
+    }
+
+    private void CancelUpload()
+    {
+        _uploadCancelled = true;
+        _uploadCts?.Cancel();
         StateHasChanged();
     }
 
@@ -1446,63 +1752,268 @@
         _deleting = true;
         try
         {
+            var deleted = 0;
+            var bucketDeleted = false;
+
             if (_deleteBatch)
             {
+                var objectKeys = new List<string>();
                 foreach (var key in _selectedKeys.ToList())
                 {
                     var batchItem = _items.FirstOrDefault(i => i.Key == key);
                     if (batchItem is { IsObject: false, IsBucket: false })
-                        await DeletePrefixAsync(key);
+                        deleted += await DeletePrefixAsync(key);
                     else
-                        await DeleteObjectAndPruneAsync(key);
+                        objectKeys.Add(key);
                 }
+
+                deleted += await DeleteObjectsBatchAsync(objectKeys);
                 _selectedKeys.Clear();
             }
             else if (_deleteTarget is not null)
             {
                 if (_deleteTarget.IsBucket)
+                {
                     await BucketSvc.DeleteBucketAsync(_deleteTarget.Key);
+                    bucketDeleted = true;
+                    deleted = 1;
+                }
                 else if (_deleteTarget.IsObject)
-                    await DeleteObjectAndPruneAsync(_deleteTarget.Key);
+                {
+                    deleted = await DeleteObjectsBatchAsync([_deleteTarget.Key]);
+                }
                 else
-                    await DeletePrefixAsync(_deleteTarget.Key);
+                {
+                    deleted = await DeletePrefixAsync(_deleteTarget.Key);
+                }
             }
+
             CancelDelete();
             await OnParametersSetAsync();
+            Message.Success(bucketDeleted ? "Bucket 已删除" : $"已删除 {deleted} 个对象");
         }
-        catch (Exception ex) { _error = ex.Message; _deleting = false; }
-    }
-
-    private async Task DeleteObjectAndPruneAsync(string key)
-    {
-        await ObjectSvc.DeleteObjectAsync(new Models.Api.Objects.DeleteObjectRequest { Bucket = BucketName!, Key = key });
-
-        // After deleting, check if the parent folder (up to but not including the bucket root) is now empty
-        var slashIdx = key.LastIndexOf('/');
-        if (slashIdx <= 0) return; // no parent folder
-        var parentPrefix = key[..(slashIdx + 1)];
-        if (parentPrefix == CurrentPrefix) return; // don't prune the current view prefix
-
-        var checkReq  = new ListObjectsV2Request { Prefix = parentPrefix, MaxKeys = 1 };
-        var checkResp = await BucketSvc.ListObjectsV2Async(BucketName!, checkReq);
-        if (checkResp.Contents.Count == 0 && checkResp.CommonPrefixes.Count == 0)
+        catch (Exception ex)
         {
-            // Folder is empty — nothing to delete (virtual folder, no placeholder object needed)
-            // The folder will automatically disappear from listings
+            _error = ex.Message;
+            Message.Error($"删除失败：{ex.Message}");
+            _deleting = false;
         }
     }
 
-    private async Task DeletePrefixAsync(string prefix)
+    /// <summary>Deletes objects through the S3 multi-delete API in batches of 1000.</summary>
+    private async Task<int> DeleteObjectsBatchAsync(IReadOnlyCollection<string> keys)
     {
-        var req = new ListObjectsV2Request { Prefix = prefix, MaxKeys = 1000 };
-        ListObjectsV2Response? resp;
+        if (keys.Count == 0) return 0;
+
+        var deleted = 0;
+        foreach (var chunk in keys.Chunk(1000))
+        {
+            var resp = await ObjectSvc.DeleteObjectsAsync(BucketName!, new Models.Api.Objects.DeleteObjectsRequest
+            {
+                Bucket = BucketName!,
+                Objects = chunk.Select(k => new Models.Api.Objects.DeleteObjectEntry { Key = k }).ToList()
+            });
+            deleted += resp.Deleted.Count;
+        }
+
+        return deleted;
+    }
+
+    /// <summary>Deletes every object under a virtual folder prefix.</summary>
+    private async Task<int> DeletePrefixAsync(string prefix)
+    {
+        var keys = new List<string>();
+        string? token = null;
+
         do
         {
-            resp = await BucketSvc.ListObjectsV2Async(BucketName!, req);
-            foreach (var obj in resp.Contents)
-                await ObjectSvc.DeleteObjectAsync(new Models.Api.Objects.DeleteObjectRequest { Bucket = BucketName!, Key = obj.Key });
-            req.ContinuationToken = resp.NextContinuationToken;
-        } while (resp.IsTruncated);
+            var resp = await BucketSvc.ListObjectsV2Async(BucketName!, new ListObjectsV2Request
+            {
+                Prefix = prefix,
+                MaxKeys = 1000,
+                ContinuationToken = token
+            });
+            keys.AddRange(resp.Contents.Select(c => c.Key));
+            token = resp.IsTruncated ? resp.NextContinuationToken : null;
+        }
+        while (token is not null);
+
+        return await DeleteObjectsBatchAsync(keys);
+    }
+
+    // ── Refresh / clipboard ──────────────────────────────────────────────────
+    private async Task RefreshAsync()
+    {
+        _refreshing = true;
+        try
+        {
+            await OnParametersSetAsync();
+            Message.Success("列表已刷新");
+        }
+        catch (Exception ex)
+        {
+            Message.Error($"刷新失败：{ex.Message}");
+        }
+        finally
+        {
+            _refreshing = false;
+        }
+    }
+
+    // ── Download links (permanent vs temporary) ──────────────────────────────
+    private void OpenLinkModal(ExplorerItem item)
+    {
+        if (string.IsNullOrEmpty(BucketName) || !item.IsObject) return;
+
+        _linkTarget        = item;
+        _linkPermanentUrl  = AbsoluteUrl(BuildObjectUrl(BucketName, item.Key));
+        _linkExpirySeconds = 3600;
+        RebuildTempLink();
+    }
+
+    private void CloseLinkModal()
+    {
+        _linkTarget       = null;
+        _linkPermanentUrl = null;
+        _linkTempUrl      = null;
+    }
+
+    private void OnLinkExpiryChanged(int seconds)
+    {
+        if (seconds <= 0) return;
+        _linkExpirySeconds = seconds;
+        RebuildTempLink();
+    }
+
+    /// <summary>Regenerates the presigned URL for the currently selected expiry.</summary>
+    private void RebuildTempLink()
+    {
+        if (_linkTarget is null || string.IsNullOrEmpty(BucketName)) return;
+
+        var token = Presigned.Create("GET", BucketName, _linkTarget.Key,
+            _userId, _username, _isSuperAdmin, expiresInSeconds: _linkExpirySeconds);
+
+        var relative = AppendQuery(
+            BuildObjectUrl(BucketName, _linkTarget.Key),
+            $"X-Apiext-Fs-Presign={Uri.EscapeDataString(token.Token)}");
+
+        _linkTempUrl = AbsoluteUrl(relative);
+    }
+
+    private async Task CopyPermanentLinkAsync()
+    {
+        if (_linkPermanentUrl is null) return;
+
+        await JS.InvokeVoidAsync("apiextfsCopy", _linkPermanentUrl);
+        Message.Success(_currentBucketPolicy?.IsPublicRead == true
+            ? "已复制永久直连地址"
+            : "已复制永久地址（私有 Bucket 需携带凭据访问）");
+    }
+
+    private async Task CopyTempLinkAsync()
+    {
+        if (_linkTempUrl is null) return;
+
+        await JS.InvokeVoidAsync("apiextfsCopy", _linkTempUrl);
+        Message.Success($"已复制临时链接（{ExpiryLabel(_linkExpirySeconds)}内有效）");
+    }
+
+    private static string ExpiryLabel(int seconds) => seconds switch
+    {
+        >= 604_800 => "7 天",
+        >= 86_400  => "24 小时",
+        _          => "1 小时"
+    };
+
+    private string AbsoluteUrl(string relative)
+        => new Uri(new Uri(Nav.BaseUri), relative).ToString();
+
+    private async Task CopyBucketPathAsync(ExplorerItem item)
+    {
+        var path = $"s3://{item.Key}";
+        await JS.InvokeVoidAsync("apiextfsCopy", path);
+        Message.Success($"已复制 {path}");
+    }
+
+    // ── Rename / move ────────────────────────────────────────────────────────
+    private void OpenRename(ExplorerItem item)
+    {
+        if (!item.IsObject) return;
+        _renameTarget = item;
+        _renameValue  = item.DisplayName;
+        _renameError  = null;
+    }
+
+    private void CloseRename()
+    {
+        if (_renaming) return;
+        _renameTarget = null;
+        _renameError  = null;
+        _renameValue  = string.Empty;
+    }
+
+    private async Task ConfirmRenameAsync()
+    {
+        if (_renameTarget is null || _renaming) return;
+
+        var input = _renameValue.Trim().Replace('\\', '/').TrimStart('/');
+
+        if (string.IsNullOrWhiteSpace(input))
+        {
+            _renameError = "请输入新名称";
+            return;
+        }
+
+        if (input.EndsWith('/'))
+        {
+            _renameError = "名称不能以 / 结尾";
+            return;
+        }
+
+        if (input.Split('/').Any(seg => seg is "" or "." or ".."))
+        {
+            _renameError = "名称中不能包含空段、. 或 ..";
+            return;
+        }
+
+        var sourceKey = _renameTarget.Key;
+        // A bare name renames in place; a path moves within the current bucket.
+        var destKey = input.Contains('/') ? input : CurrentPrefix + input;
+
+        if (destKey == sourceKey)
+        {
+            CloseRename();
+            return;
+        }
+
+        _renaming = true;
+        _renameError = null;
+        try
+        {
+            // S3 has no rename primitive: copy to the new key, then delete the old one.
+            await ObjectSvc.CopyObjectAsync(new Models.Api.Objects.CopyObjectRequest
+            {
+                CopySource         = $"/{BucketName}/{sourceKey}",
+                DestinationBucket  = BucketName!,
+                DestinationKey     = destKey
+            });
+
+            await ObjectSvc.DeleteObjectAsync(new Models.Api.Objects.DeleteObjectRequest
+            {
+                Bucket = BucketName!,
+                Key    = sourceKey
+            });
+
+            _renaming = false;
+            CloseRename();
+            await OnParametersSetAsync();
+            Message.Success($"已保存为 {destKey}");
+        }
+        catch (Exception ex)
+        {
+            _renameError = ex.Message;
+            _renaming = false;
+        }
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -1622,6 +2133,68 @@
         public UploadStatus  Status       { get; set; }  = UploadStatus.Pending;
         public int           Progress     { get; set; }
         public string?       ErrorDetail  { get; set; }
+    }
+
+    /// <summary>
+    /// Read-only pass-through stream that reports cumulative bytes read, letting
+    /// the upload modal display real progress while the service copies the payload.
+    /// The inner stream stays owned by the caller.
+    /// </summary>
+    private sealed class ProgressStream : Stream
+    {
+        private readonly Stream _inner;
+        private readonly long _total;
+        private readonly Action<long> _onProgress;
+        private long _read;
+        private long _lastReported;
+
+        public ProgressStream(Stream inner, long total, Action<long> onProgress)
+        {
+            _inner = inner;
+            _total = total;
+            _onProgress = onProgress;
+        }
+
+        public override bool CanRead  => true;
+        public override bool CanSeek  => false;
+        public override bool CanWrite => false;
+        public override long Length   => _total;
+        public override long Position { get => _read; set => throw new NotSupportedException(); }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            var n = _inner.Read(buffer, offset, count);
+            Report(n);
+            return n;
+        }
+
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken ct)
+            => ReadAsync(buffer.AsMemory(offset, count), ct).AsTask();
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken ct = default)
+        {
+            var n = await _inner.ReadAsync(buffer, ct);
+            Report(n);
+            return n;
+        }
+
+        private void Report(int n)
+        {
+            if (n <= 0) return;
+            _read += n;
+
+            // Throttle to ~100 updates per file (or every 512 KB for small files).
+            var step = Math.Max(_total / 100, 512 * 1024);
+            if (_read < _total && _read - _lastReported < step) return;
+
+            _lastReported = _read;
+            _onProgress(_read);
+        }
+
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
     private enum UploadStatus  { Pending, Uploading, Done, Skipped, Error }

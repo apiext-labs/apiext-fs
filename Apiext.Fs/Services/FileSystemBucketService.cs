@@ -1,6 +1,7 @@
-using System.Security.Cryptography;
 using Apiext.Fs.Models.Api.Buckets;
 using Apiext.Fs.Models.Api.Common;
+using Apiext.Fs.Models.Entities;
+using MimeKit;
 
 namespace Apiext.Fs.Services;
 
@@ -8,16 +9,22 @@ namespace Apiext.Fs.Services;
 /// Bucket service backed by the native file system.
 /// Each sub-directory of <c>StoreLocation</c> is treated as a bucket.
 /// Files placed directly in the root are ignored.
+///
+/// Object metadata (ETag, content type) is served from <see cref="IObjectIndexService"/>
+/// so listing does not re-hash every file. The file system stays authoritative:
+/// an index entry is only used while size and last-write ticks still match.
 /// </summary>
 public sealed class FileSystemBucketService : IS3BucketService
 {
     private readonly string _root;
+    private readonly IObjectIndexService _index;
     private static readonly string Region = "us-east-1";
 
-    public FileSystemBucketService(IConfiguration config)
+    public FileSystemBucketService(IConfiguration config, IObjectIndexService index)
     {
         _root = Path.GetFullPath(config["StoreLocation"]
             ?? throw new InvalidOperationException("StoreLocation is not configured."));
+        _index = index;
         Directory.CreateDirectory(_root);
     }
 
@@ -32,6 +39,8 @@ public sealed class FileSystemBucketService : IS3BucketService
 
     private static S3Owner OwnerFor(string ownerId) => new() { Id = ownerId, DisplayName = ownerId };
 
+    private static string FormatTimestamp(DateTime utc) => utc.ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
+
     // ── ListBuckets ───────────────────────────────────────────────────────────
 
     public Task<ListBucketsResponse> ListBucketsAsync(string ownerId, CancellationToken ct = default)
@@ -42,7 +51,7 @@ public sealed class FileSystemBucketService : IS3BucketService
             .Select(d => new BucketEntry
             {
                 Name = d.Name,
-                CreationDate = d.CreationTimeUtc.ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
+                CreationDate = FormatTimestamp(d.CreationTimeUtc)
             })
             .ToList();
 
@@ -72,7 +81,7 @@ public sealed class FileSystemBucketService : IS3BucketService
 
     // ── DeleteBucket ──────────────────────────────────────────────────────────
 
-    public Task DeleteBucketAsync(string bucket, CancellationToken ct = default)
+    public async Task DeleteBucketAsync(string bucket, CancellationToken ct = default)
     {
         var path = BucketPath(bucket);
         if (!Directory.Exists(path))
@@ -84,7 +93,7 @@ public sealed class FileSystemBucketService : IS3BucketService
             throw new InvalidOperationException("BucketNotEmpty");
 
         Directory.Delete(path, recursive: true);
-        return Task.CompletedTask;
+        await _index.DeleteBucketAsync(bucket, ct);
     }
 
     // ── GetBucketLocation ─────────────────────────────────────────────────────
@@ -99,21 +108,21 @@ public sealed class FileSystemBucketService : IS3BucketService
 
     // ── ListObjectsV2 ─────────────────────────────────────────────────────────
 
-    public Task<ListObjectsV2Response> ListObjectsV2Async(
+    public async Task<ListObjectsV2Response> ListObjectsV2Async(
         string bucket, ListObjectsV2Request request, CancellationToken ct = default)
     {
         var bucketPath = BucketPath(bucket);
         if (!Directory.Exists(bucketPath))
             throw new KeyNotFoundException("NoSuchBucket");
 
-        var allKeys = EnumerateKeys(bucketPath);
+        var files = EnumerateFiles(bucketPath);
 
         var (contents, prefixes, isTruncated, nextToken) =
-            ApplyListFilters(allKeys, request.Prefix, request.Delimiter,
+            ApplyListFilters(files.Keys, request.Prefix, request.Delimiter,
                 request.MaxKeys, request.ContinuationToken ?? request.StartAfter,
                 isContinuationToken: request.ContinuationToken != null);
 
-        var response = new ListObjectsV2Response
+        return new ListObjectsV2Response
         {
             Name = bucket,
             Prefix = request.Prefix ?? string.Empty,
@@ -123,29 +132,27 @@ public sealed class FileSystemBucketService : IS3BucketService
             IsTruncated = isTruncated,
             NextContinuationToken = nextToken,
             EncodingType = request.EncodingType,
-            Contents = contents.Select(k => BuildObjectContent(bucketPath, k, request.FetchOwner)).ToList(),
+            Contents = await BuildContentsAsync(bucket, files, contents, request.FetchOwner, ct),
             CommonPrefixes = prefixes.Select(p => new CommonPrefix { Prefix = p }).ToList()
         };
-
-        return Task.FromResult(response);
     }
 
     // ── ListObjectsV1 ─────────────────────────────────────────────────────────
 
-    public Task<ListObjectsV1Response> ListObjectsV1Async(
+    public async Task<ListObjectsV1Response> ListObjectsV1Async(
         string bucket, ListObjectsV1Request request, CancellationToken ct = default)
     {
         var bucketPath = BucketPath(bucket);
         if (!Directory.Exists(bucketPath))
             throw new KeyNotFoundException("NoSuchBucket");
 
-        var allKeys = EnumerateKeys(bucketPath);
+        var files = EnumerateFiles(bucketPath);
 
         var (contents, prefixes, isTruncated, nextMarker) =
-            ApplyListFilters(allKeys, request.Prefix, request.Delimiter,
+            ApplyListFilters(files.Keys, request.Prefix, request.Delimiter,
                 request.MaxKeys, request.Marker, isContinuationToken: false);
 
-        var response = new ListObjectsV1Response
+        return new ListObjectsV1Response
         {
             Name = bucket,
             Prefix = request.Prefix ?? string.Empty,
@@ -155,25 +162,33 @@ public sealed class FileSystemBucketService : IS3BucketService
             Marker = request.Marker ?? string.Empty,
             NextMarker = isTruncated ? nextMarker : null,
             EncodingType = request.EncodingType,
-            Contents = contents.Select(k => BuildObjectContent(bucketPath, k, false)).ToList(),
+            Contents = await BuildContentsAsync(bucket, files, contents, fetchOwner: false, ct),
             CommonPrefixes = prefixes.Select(p => new CommonPrefix { Prefix = p }).ToList()
         };
-
-        return Task.FromResult(response);
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
 
-    /// <summary>Returns all object keys (relative paths using forward slashes) in a bucket directory,
-    /// excluding the multipart staging directory.</summary>
-    private static IEnumerable<string> EnumerateKeys(string bucketPath)
+    /// <summary>Returns all object keys (relative paths using forward slashes) mapped to their
+    /// file info, excluding the multipart staging directory. Keys stay sorted ordinally so
+    /// marker / continuation-token paging is stable.</summary>
+    private static SortedDictionary<string, FileInfo> EnumerateFiles(string bucketPath)
     {
         var stagingDir = Path.Combine(bucketPath, FileSystemMultipartService.StagingDirName);
-        return new DirectoryInfo(bucketPath)
-            .EnumerateFiles("*", SearchOption.AllDirectories)
-            .Where(f => !f.FullName.StartsWith(stagingDir, StringComparison.OrdinalIgnoreCase))
-            .Select(f => f.FullName[(bucketPath.Length + 1)..].Replace(Path.DirectorySeparatorChar, '/'))
-            .OrderBy(k => k, StringComparer.Ordinal);
+        var map = new SortedDictionary<string, FileInfo>(StringComparer.Ordinal);
+
+        foreach (var fi in new DirectoryInfo(bucketPath)
+                     .EnumerateFiles("*", SearchOption.AllDirectories))
+        {
+            if (fi.FullName.StartsWith(stagingDir, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var key = fi.FullName[(bucketPath.Length + 1)..]
+                .Replace(Path.DirectorySeparatorChar, '/');
+            map[key] = fi;
+        }
+
+        return map;
     }
 
     private static (List<string> keys, List<string> prefixes, bool isTruncated, string? nextMarker)
@@ -221,30 +236,64 @@ public sealed class FileSystemBucketService : IS3BucketService
         return (resultKeys, commonPrefixes.ToList(), false, null);
     }
 
-    private static ObjectContent BuildObjectContent(string bucketPath, string key, bool fetchOwner)
-    {
-        var filePath = Path.Combine(bucketPath, key.Replace('/', Path.DirectorySeparatorChar));
-        var fi = new FileInfo(filePath);
-        return new ObjectContent
-        {
-            Key = key,
-            LastModified = fi.LastWriteTimeUtc.ToString("yyyy-MM-ddTHH:mm:ss.fffZ"),
-            ETag = ComputeETagFromInfo(fi),
-            Size = fi.Length,
-            StorageClass = S3StorageClass.Standard,
-            Owner = fetchOwner ? new S3Owner { Id = "owner", DisplayName = "owner" } : null
-        };
-    }
-
     /// <summary>
-    /// Derives a stable ETag from file metadata without reading content.
-    /// Uses MD5 of "size:lastWriteUtcTicks" — fast and deterministic.
-    /// For exact content ETag the full read is deferred to PutObject.
+    /// Builds list entries, reusing cached ETag/content type when the cached
+    /// size + last-write ticks still match the file. Misses are hashed once and
+    /// written back to the index in a single batch.
     /// </summary>
-    private static string ComputeETagFromInfo(FileInfo fi)
+    private async Task<List<ObjectContent>> BuildContentsAsync(
+        string bucket,
+        IReadOnlyDictionary<string, FileInfo> files,
+        IReadOnlyList<string> keys,
+        bool fetchOwner,
+        CancellationToken ct)
     {
-        var input = $"{fi.Length}:{fi.LastWriteTimeUtc.Ticks}";
-        var hash = MD5.HashData(System.Text.Encoding.UTF8.GetBytes(input));
-        return $"\"{Convert.ToHexString(hash).ToLowerInvariant()}\"";
+        var cached = await _index.GetManyAsync(bucket, keys, ct);
+        var pending = new List<ObjectIndexEntry>();
+        var results = new List<ObjectContent>(keys.Count);
+
+        foreach (var key in keys)
+        {
+            var fi = files[key];
+            var ticks = fi.LastWriteTimeUtc.Ticks;
+            var lastModified = FormatTimestamp(fi.LastWriteTimeUtc);
+
+            string etag;
+            if (cached.TryGetValue(key, out var entry)
+                && entry.Size == fi.Length
+                && entry.LastWriteUtcTicks == ticks)
+            {
+                etag = entry.ETag;
+            }
+            else
+            {
+                etag = ObjectETag.ComputeFromFile(fi.FullName);
+                pending.Add(new ObjectIndexEntry
+                {
+                    Bucket = bucket,
+                    Key = key,
+                    Size = fi.Length,
+                    LastWriteUtcTicks = ticks,
+                    ETag = etag,
+                    ContentType = MimeTypes.GetMimeType(fi.Name),
+                    LastModified = lastModified
+                });
+            }
+
+            results.Add(new ObjectContent
+            {
+                Key = key,
+                LastModified = lastModified,
+                ETag = etag,
+                Size = fi.Length,
+                StorageClass = S3StorageClass.Standard,
+                Owner = fetchOwner ? new S3Owner { Id = "owner", DisplayName = "owner" } : null
+            });
+        }
+
+        if (pending.Count > 0)
+            await _index.UpsertManyAsync(pending, ct);
+
+        return results;
     }
 }

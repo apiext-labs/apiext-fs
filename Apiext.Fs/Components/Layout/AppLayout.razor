@@ -10,6 +10,7 @@
 
 <BasicLayout MenuData="_menuData"
              Logo="@("/_assets/logo.svg")"
+             BaseUrl="@("/_apiextfs")"
              MenuAccordion
              OpenKeys="_openMenuKeys"
              @bind-Collapsed="_collapsed">
@@ -30,13 +31,14 @@
             @Body
         </div>
     </ChildContent>
-    <FooterRender>
-        <FooterView Copyright="@($"{DateTime.Now.Year} Apiext.Fs")" Links="_footerLinks" />
-    </FooterRender>
+    @* No FooterRender: ProLayout has no boolean footer switch, so the footer is
+       both omitted here and hidden via CSS (.ant-pro-global-footer) to suppress
+       the built-in default footer as well. *@
 </BasicLayout>
 
-@* ProLayout floating theme/layout panel (right edge gear). Dev-oriented; keep for flexible config. *@
-<SettingDrawer />
+@* Theme is fixed by wwwroot/_assets/theme.css (--ant-primary-*). The ProLayout
+   SettingDrawer is intentionally omitted: its preset color palettes would
+   override the steel-blue theme and make the settings panel inconsistent. *@
 
 <div id="blazor-error-ui" data-nosnippet>
     发生了未处理的错误。
@@ -68,11 +70,6 @@
     private string _username = string.Empty;
     private readonly string[] _openMenuKeys = ["buckets"];
     private MenuDataItem[] _menuData = [];
-
-    private readonly LinkItem[] _footerLinks =
-    [
-        new LinkItem { Key = "apiextfs", Title = "Apiext.Fs", Href = "/_apiextfs/buckets", BlankTarget = false }
-    ];
 
     // Add-bucket modal state
     private bool _showAddBucket;

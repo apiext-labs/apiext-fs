@@ -1,7 +1,7 @@
-using System.Security.Cryptography;
 using System.Text.Json;
 using Apiext.Fs.Models.Api.Common;
 using Apiext.Fs.Models.Api.Multipart;
+using Apiext.Fs.Models.Entities;
 
 namespace Apiext.Fs.Services;
 
@@ -20,12 +20,14 @@ public sealed class FileSystemMultipartService : IS3MultipartService
     public const string StagingDirName = ".multipart";
 
     private readonly string _root;
+    private readonly IObjectIndexService _index;
     private const int StreamCopyBufferSize = 81_920;
 
-    public FileSystemMultipartService(IConfiguration config)
+    public FileSystemMultipartService(IConfiguration config, IObjectIndexService index)
     {
         _root = Path.GetFullPath(config["StoreLocation"]
             ?? throw new InvalidOperationException("StoreLocation is not configured."));
+        _index = index;
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -231,6 +233,20 @@ public sealed class FileSystemMultipartService : IS3MultipartService
 
         var etag = $"\"{ComputeETag(destPath).Trim('"')}-{parts.Count}\"";
 
+        // Cache the finalized object so ListObjects / GetObject report the same
+        // (S3-style composite) ETag without re-hashing the file.
+        var finalized = new FileInfo(destPath);
+        await _index.UpsertAsync(new ObjectIndexEntry
+        {
+            Bucket = request.Bucket,
+            Key = request.Key,
+            Size = finalized.Length,
+            LastWriteUtcTicks = finalized.LastWriteTimeUtc.Ticks,
+            ETag = etag,
+            ContentType = meta.ContentType,
+            LastModified = finalized.LastWriteTimeUtc.ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
+        }, ct);
+
         // Write a completion marker BEFORE removing the staging directory so that
         // ListParts can still describe the upload as a single consolidated part.
         WriteCompletedMarker(request.Bucket, request.UploadId, meta, parts.Count, etag);
@@ -265,7 +281,7 @@ public sealed class FileSystemMultipartService : IS3MultipartService
 
     // ── AbortMultipartUpload ──────────────────────────────────────────────────
 
-    public Task AbortMultipartUploadAsync(
+    public async Task AbortMultipartUploadAsync(
         AbortMultipartUploadRequest request, CancellationToken ct = default)
     {
         EnsureBucketExists(request.Bucket);
@@ -276,12 +292,15 @@ public sealed class FileSystemMultipartService : IS3MultipartService
         try
         {
             if (File.Exists(destPath) && new FileInfo(destPath).Length == 0)
+            {
                 File.Delete(destPath);
+                // The placeholder may already have a cached (empty-file) ETag.
+                await _index.DeleteAsync(request.Bucket, request.Key, ct);
+            }
         }
         catch { /* best-effort */ }
 
         TryDeleteUpload(request.Bucket, request.UploadId);
-        return Task.CompletedTask;
     }
 
     // ── ListMultipartUploads ──────────────────────────────────────────────────
@@ -384,13 +403,9 @@ public sealed class FileSystemMultipartService : IS3MultipartService
 
     // ── Private helpers ───────────────────────────────────────────────────────
 
-    private static string ComputeETag(string filePath)
-    {
-        using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read,
-            FileShare.Read, StreamCopyBufferSize, useAsync: false);
-        var hash = MD5.HashData(stream);
-        return $"\"{Convert.ToHexString(hash).ToLowerInvariant()}\"";
-    }
+    // Delegates to the shared implementation so part ETags use the exact same
+    // format as PutObject / GetObject / ListObjects.
+    private static string ComputeETag(string filePath) => ObjectETag.ComputeFromFile(filePath);
 
     private void TryDeleteUpload(string bucket, string uploadId)
     {

@@ -10,7 +10,9 @@ public sealed class FileSystemBucketServiceTests : IDisposable
     private readonly FileSystemBucketService _sut;
 
     public FileSystemBucketServiceTests()
-        => _sut = new FileSystemBucketService(TestFactory.ConfigFor(_tmp.Path));
+        => _sut = new FileSystemBucketService(
+            TestFactory.ConfigFor(_tmp.Path),
+            TestFactory.CreateIndex(nameof(FileSystemBucketServiceTests)));
 
     public void Dispose() => _tmp.Dispose();
 

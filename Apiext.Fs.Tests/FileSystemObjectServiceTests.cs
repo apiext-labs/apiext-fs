@@ -10,7 +10,9 @@ public sealed class FileSystemObjectServiceTests : IDisposable
     private readonly FileSystemObjectService _sut;
 
     public FileSystemObjectServiceTests()
-        => _sut = new FileSystemObjectService(TestFactory.ConfigFor(_tmp.Path));
+        => _sut = new FileSystemObjectService(
+            TestFactory.ConfigFor(_tmp.Path),
+            TestFactory.CreateIndex(nameof(FileSystemObjectServiceTests)));
 
     public void Dispose() => _tmp.Dispose();
 

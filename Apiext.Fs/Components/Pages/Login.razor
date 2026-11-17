@@ -1,9 +1,12 @@
 @page "/_apiextfs/login"
 @layout AuthLayout
+@rendermode InteractiveServer
 @using Microsoft.EntityFrameworkCore
+@using Microsoft.AspNetCore.Components.Web
 @inject IDbContextFactory<Apiext.Fs.Data.AppDbContext> DbFactory
 @inject IConfiguration Config
 @inject NavigationManager Nav
+@inject IJSRuntime JS
 
 @code {
     [SupplyParameterFromQuery] public string? Error { get; set; }
@@ -12,6 +15,11 @@
 
     private bool _staticAllowed;
     private bool _hasDbUsers;
+
+    private string _username = string.Empty;
+    private string _password = string.Empty;
+    private bool _submitting;
+    private string? _validationError;
 
     protected override async Task OnInitializedAsync()
     {
@@ -24,6 +32,26 @@
         if (!_staticAllowed && !_hasDbUsers)
             Nav.NavigateTo("/_apiextfs/setup", replace: true);
     }
+
+    private async Task LoginAsync()
+    {
+        if (_submitting) return;
+
+        if (string.IsNullOrWhiteSpace(_username) || string.IsNullOrEmpty(_password))
+        {
+            _validationError = "请输入用户名和密码。";
+            return;
+        }
+
+        _validationError = null;
+        _submitting = true;
+
+        // Real form POST so the server can issue the auth cookie.
+        await JS.InvokeVoidAsync("apiextfsSubmitLogin", _username, _password, ReturnUrl ?? string.Empty);
+    }
+
+    private Task OnEnterPressed(KeyboardEventArgs args)
+        => args.Key is "Enter" or "NumpadEnter" ? LoginAsync() : Task.CompletedTask;
 }
 
 <PageTitle>登录 - Apiext.Fs</PageTitle>
@@ -43,49 +71,38 @@
                ShowIcon="true"
                Class="apiextfs-user-alert" />
     }
+    @if (_validationError is not null)
+    {
+        <Alert Type="@AlertType.Error"
+               Message="@_validationError"
+               ShowIcon="true"
+               Class="apiextfs-user-alert" />
+    }
 
-    <form method="post" action="/_apiextfs/auth/login" class="apiextfs-user-form" autocomplete="on">
-        <input type="hidden" name="ReturnUrl" value="@ReturnUrl" />
-
+    <div class="apiextfs-user-form">
         <div class="apiextfs-user-field">
             <label class="apiextfs-user-label" for="Username">用户名</label>
-            <span class="ant-input-affix-wrapper ant-input-affix-wrapper-lg">
-                <span class="ant-input-prefix">
-                    <Icon Type="user" Class="apiextfs-user-prefix-icon" />
-                </span>
-                <input id="Username"
-                       name="Username"
-                       type="text"
-                       class="ant-input ant-input-lg"
-                       autocomplete="username"
-                       required
-                       autofocus
-                       placeholder="Access Key / 用户名" />
-            </span>
+            <Input @bind-Value="_username"
+                   Placeholder="Access Key / 用户名"
+                   AutoFocus
+                   Disabled="_submitting"
+                   OnPressEnter="OnEnterPressed" />
         </div>
 
         <div class="apiextfs-user-field">
             <label class="apiextfs-user-label" for="Password">密码</label>
-            <span class="ant-input-affix-wrapper ant-input-affix-wrapper-lg">
-                <span class="ant-input-prefix">
-                    <Icon Type="lock" Class="apiextfs-user-prefix-icon" />
-                </span>
-                <input id="Password"
-                       name="Password"
-                       type="password"
-                       class="ant-input ant-input-lg"
-                       autocomplete="current-password"
-                       required
-                       placeholder="Secret Key / 密码" />
-            </span>
+            <InputPassword @bind-Value="_password"
+                           Placeholder="Secret Key / 密码"
+                           Disabled="_submitting"
+                           OnPressEnter="OnEnterPressed" />
         </div>
 
-        <button type="submit" class="ant-btn ant-btn-primary ant-btn-lg ant-btn-block apiextfs-user-submit">
+        <Button Type="@ButtonType.Primary"
+                Block
+                Class="apiextfs-user-submit"
+                Loading="_submitting"
+                OnClick="LoginAsync">
             登录
-        </button>
-    </form>
-
-    <div class="apiextfs-user-other">
-        S3 客户端使用同一组凭据：Access Key 为用户名，Secret Key 为密码。
+        </Button>
     </div>
 </div>

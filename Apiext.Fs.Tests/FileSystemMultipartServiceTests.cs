@@ -11,7 +11,9 @@ public sealed class FileSystemMultipartServiceTests : IDisposable
     private readonly FileSystemMultipartService _sut;
 
     public FileSystemMultipartServiceTests()
-        => _sut = new FileSystemMultipartService(TestFactory.ConfigFor(_tmp.Path));
+        => _sut = new FileSystemMultipartService(
+            TestFactory.ConfigFor(_tmp.Path),
+            TestFactory.CreateIndex(nameof(FileSystemMultipartServiceTests)));
 
     public void Dispose() => _tmp.Dispose();
 

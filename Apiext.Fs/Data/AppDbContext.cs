@@ -11,6 +11,7 @@ public sealed class AppDbContext : DbContext
     public DbSet<UserAcl> UserAcls => Set<UserAcl>();
     public DbSet<BucketPolicy> BucketPolicies => Set<BucketPolicy>();
     public DbSet<BackgroundJobRun> BackgroundJobRuns => Set<BackgroundJobRun>();
+    public DbSet<ObjectIndexEntry> ObjectIndex => Set<ObjectIndexEntry>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -42,6 +43,13 @@ public sealed class AppDbContext : DbContext
         {
             e.HasIndex(j => new { j.JobType, j.Status });
             e.HasIndex(j => j.CreatedUtc);
+        });
+
+        // Composite primary key doubles as the lookup index for ListObjects /
+        // GetObject metadata reads.
+        modelBuilder.Entity<ObjectIndexEntry>(e =>
+        {
+            e.HasKey(x => new { x.Bucket, x.Key });
         });
     }
 }

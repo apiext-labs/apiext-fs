@@ -5,17 +5,18 @@
 
 /* ── Design tokens (also used by Buckets.razor.css fallbacks) ─ */
 :root {
-    --bg: #f5f7fb;
+    --bg: #f5f6f8;
     --surface: #ffffff;
     --surface-2: #f0f3f8;
     --surface-3: #e6ebf3;
     --border: #d7deea;
-    --accent: #1677ff;
-    --accent-hover: #0958d9;
-    --accent-dim: rgba(22, 119, 255, 0.12);
-    --text: #182033;
-    --text-muted: #647086;
-    --text-faint: #9aa5b6;
+    --accent: #4a6b8a;
+    --accent-hover: #5d7f9e;
+    --accent-active: #3a5570;
+    --accent-dim: rgba(74, 107, 138, 0.12);
+    --text: #2d3748;
+    --text-muted: #718096;
+    --text-faint: #9aa5b1;
     --danger: #dc2626;
     --danger-dim: rgba(220, 38, 38, 0.10);
     --success: #168a4a;
@@ -101,7 +102,7 @@ img {
     min-height: 100dvh;
     overflow: auto;
     background:
-        radial-gradient(ellipse 70% 50% at 50% 0%, rgba(22, 119, 255, 0.10), transparent 60%),
+        radial-gradient(ellipse 70% 50% at 50% 0%, rgba(74, 107, 138, 0.10), transparent 60%),
         linear-gradient(180deg, #f7f9fc 0%, #eef2f7 100%);
 }
 
@@ -142,7 +143,7 @@ img {
     width: 44px;
     height: 44px;
     border-radius: 10px;
-    box-shadow: 0 6px 16px rgba(22, 119, 255, 0.22);
+    box-shadow: 0 6px 16px rgba(74, 107, 138, 0.25);
 }
 
 .apiextfs-user-layout-title {
@@ -225,23 +226,13 @@ img {
     height: 42px !important;
     margin-top: 4px;
     font-weight: 600;
-    border-radius: 8px !important;
-    box-shadow: 0 6px 16px rgba(22, 119, 255, 0.28);
+    box-shadow: 0 6px 16px rgba(74, 107, 138, 0.28);
 }
 
-.apiextfs-user-other {
-    margin-top: 18px;
-    padding-top: 16px;
-    border-top: 1px solid #f0f3f7;
-    color: rgba(0, 0, 0, 0.45);
-    font-size: 12px;
-    line-height: 1.6;
-}
-
-/* Native inputs inside ant affix wrappers */
+/* Text fields: standalone <Input> and the affix wrapper used by <InputPassword>.
+   Both keep the same metrics so the two fields line up. */
+.apiextfs-user-form .ant-input,
 .apiextfs-user-form .ant-input-affix-wrapper {
-    display: inline-flex;
-    align-items: center;
     box-sizing: border-box;
     width: 100%;
     min-width: 0;
@@ -252,40 +243,44 @@ img {
     line-height: 1.5714285714285714;
     background-color: #fafbfc;
     border: 1px solid #d9e0ea;
-    border-radius: 8px;
     transition: all 0.2s;
 }
 
+.apiextfs-user-form .ant-input-affix-wrapper {
+    display: inline-flex;
+    align-items: center;
+}
+
+.apiextfs-user-form .ant-input:hover,
 .apiextfs-user-form .ant-input-affix-wrapper:hover {
-    border-color: #4096ff;
+    border-color: var(--accent-hover);
     background-color: #fff;
 }
 
+.apiextfs-user-form .ant-input:focus,
 .apiextfs-user-form .ant-input-affix-wrapper:focus-within {
-    border-color: #1677ff;
+    border-color: var(--accent);
     background-color: #fff;
-    box-shadow: 0 0 0 3px rgba(22, 119, 255, 0.12);
+    box-shadow: 0 0 0 3px var(--accent-dim);
     outline: 0;
 }
 
-.apiextfs-user-form .ant-input-prefix {
-    display: flex;
-    flex: none;
-    align-items: center;
-    margin-inline-end: 8px;
-}
-
-.apiextfs-user-form .ant-input {
-    box-sizing: border-box;
-    width: 100%;
-    min-width: 0;
+/* The input nested inside a password / affix wrapper must stay chrome-less. */
+.apiextfs-user-form .ant-input-affix-wrapper .ant-input,
+.apiextfs-user-form .ant-input-affix-wrapper .ant-input:hover,
+.apiextfs-user-form .ant-input-affix-wrapper .ant-input:focus {
+    flex: 1 1 auto;
+    width: auto;
+    height: auto;
     padding: 0;
-    color: inherit;
-    font-size: inherit;
-    line-height: inherit;
     background: transparent;
     border: none;
+    box-shadow: none;
     outline: none;
+}
+
+.apiextfs-user-form .ant-input-suffix {
+    color: var(--text-faint);
 }
 
 .apiextfs-user-form .ant-input::placeholder {
@@ -294,22 +289,21 @@ img {
 
 .apiextfs-user-form .ant-btn-primary {
     color: #fff;
-    background: linear-gradient(180deg, #3b8bff 0%, #1677ff 100%);
-    border-color: #1677ff;
+    background: linear-gradient(180deg, #5d7f9e 0%, #4a6b8a 100%);
+    border-color: var(--accent);
     cursor: pointer;
 }
 
 .apiextfs-user-form .ant-btn-primary:hover {
     color: #fff;
-    background: linear-gradient(180deg, #2f7ff5 0%, #0958d9 100%);
-    border-color: #0958d9;
+    background: linear-gradient(180deg, #6c8fa9 0%, #5d7f9e 100%);
+    border-color: var(--accent-hover);
 }
 
 .apiextfs-user-form .ant-btn-lg {
     height: 42px;
     padding: 6.4px 15px;
     font-size: 15px;
-    border-radius: 8px;
 }
 
 .apiextfs-user-form .ant-btn-block {
@@ -435,7 +429,7 @@ body,
 .right .ant-avatar {
     margin-right: 8px;
     color: #fff;
-    background: #1677ff;
+    background: var(--accent);
     vertical-align: middle;
 }
 
@@ -552,6 +546,42 @@ body,
     font-weight: 500;
 }
 
+/* ── Download link modal ──────────────────────────────────────── */
+.apiextfs-link-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 18px;
+}
+
+.apiextfs-link-key {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.apiextfs-link-section {
+    margin-bottom: 18px;
+}
+
+.apiextfs-link-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.apiextfs-link-row .ant-input {
+    flex: 1;
+    min-width: 0;
+}
+
+.apiextfs-link-hint {
+    display: block;
+    margin-top: 6px;
+    font-size: 12px;
+    line-height: 1.6;
+}
+
 /* ── Operational console refinements ──────────────────────────── */
 body,
 .ant-layout,
@@ -572,6 +602,12 @@ body,
     min-width: 0;
 }
 
+/* ProLayout exposes only FooterRender (no boolean switch), so removing the
+   fragment still renders the built-in footer. Hide it entirely here. */
+.ant-pro-global-footer {
+    display: none !important;
+}
+
 .ant-pro-grid-content,
 .ant-pro-grid-content-children,
 .apiextfs-page-body {
@@ -583,12 +619,17 @@ body,
 .ant-table-container,
 .ant-modal-content,
 .ant-alert {
-    border-radius: 6px;
+    border-radius: 8px;
+    /* Consistent vertical rhythm: alerts must never butt against adjacent
+       form controls, tables or modal footers. */
+    margin: 12px 0;
 }
 
 .ant-card {
     border-color: #e4e8ed;
-    box-shadow: none;
+    box-shadow:
+        0 1px 2px rgba(15, 23, 42, 0.04),
+        0 4px 12px rgba(15, 23, 42, 0.04);
 }
 
 .ant-table-container {
@@ -610,7 +651,7 @@ body,
 }
 
 .ant-table-tbody > tr:hover > td {
-    background: #f5f9ff;
+    background: #f0f4f8;
 }
 
 /* Hidden Blazor InputFile used by upload modal (global fallback) */
@@ -675,7 +716,7 @@ input.upload-file-input-hidden {
     min-height: 360px;
     padding: 48px 24px;
     background:
-        radial-gradient(ellipse 70% 60% at 50% 30%, rgba(22, 119, 255, 0.05), transparent 70%),
+        radial-gradient(ellipse 70% 60% at 50% 30%, rgba(74, 107, 138, 0.05), transparent 70%),
         #fff;
 }
 
@@ -703,7 +744,7 @@ input.upload-file-input-hidden {
 }
 
 .apiextfs-explorer-table .ant-table-tbody > tr.apiextfs-row-active > td {
-    background: #e6f4ff !important;
+    background: var(--ant-primary-1, #e9eef3) !important;
 }
 
 .apiextfs-explorer-table .ant-table-tbody > tr > td {
@@ -717,7 +758,7 @@ input.upload-file-input-hidden {
 }
 
 .apiextfs-item-name:hover {
-    color: #1677ff;
+    color: var(--accent);
 }
 
 .apiextfs-item-meta {
@@ -753,12 +794,12 @@ input.upload-file-input-hidden {
     width: 52px;
     height: 52px;
     margin-bottom: 16px;
-    border-radius: 6px;
-    background: #edf5ff;
+    border-radius: 8px;
+    background: var(--ant-primary-1, #e9eef3);
     font-size: 25px;
 }
 
-.item-icon-bucket { color: #245aa5; background: #eaf2fc; }
+.item-icon-bucket { color: var(--accent-active, #3a5570); background: #e9eef3; }
 .item-icon-folder { color: #8a5a00; background: #fff4d6; }
 .item-icon-image { color: #147d64; background: #e5f7f1; }
 .item-icon-media { color: #7b4fb3; background: #f2eafa; }

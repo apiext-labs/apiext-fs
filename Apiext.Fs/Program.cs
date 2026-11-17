@@ -87,6 +87,9 @@ namespace Apiext.Fs
             builder.Services.AddControllers();
             builder.Services.AddSingleton<IS3XmlSerializer, S3XmlSerializer>();
 
+            // Object metadata index (ETag / content type cache shared by List + Get)
+            builder.Services.AddSingleton<IObjectIndexService, ObjectIndexService>();
+
             // File system storage providers
             builder.Services.AddSingleton<IS3BucketService, FileSystemBucketService>();
             builder.Services.AddSingleton<IS3ObjectService, FileSystemObjectService>();

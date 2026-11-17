@@ -1,0 +1,33 @@
+/* ─────────────────────────────────────────────────────────────
+   Apiext.Fs theme — 钢青灰蓝 (steel-blue slate)
+   Loaded after ant-design-blazor.variable.css.
+   ONLY override --ant-primary-* variables here; do not touch
+   AntDesign preset palettes (success/warning/error/...).
+   ───────────────────────────────────────────────────────────── */
+:root {
+    /* Primary ramp — #4a6b8a base (6), hover #5d7f9e (5), active #3a5570 (7) */
+    --ant-primary-color: #4a6b8a;
+    --ant-primary-color-hover: #5d7f9e;
+    --ant-primary-color-active: #3a5570;
+    --ant-primary-color-outline: rgba(74, 107, 138, 0.2);
+    --ant-primary-1: #e9eef3;
+    --ant-primary-2: #cbd8e2;
+    --ant-primary-3: #adc0cf;
+    --ant-primary-4: #8fa4b7;
+    --ant-primary-5: #5d7f9e;
+    --ant-primary-6: #4a6b8a;
+    --ant-primary-7: #3a5570;
+    --ant-primary-8: #2f465c;
+    --ant-primary-9: #243848;
+    --ant-primary-10: #192533;
+
+    /* Deprecated derivatives kept for compatibility with variable.css */
+    --ant-primary-color-deprecated-pure: ;
+    --ant-primary-color-deprecated-l-35: #89959e;
+    --ant-primary-color-deprecated-l-20: #6e8092;
+    --ant-primary-color-deprecated-t-20: #6d7e91;
+    --ant-primary-color-deprecated-t-50: #a4b5c4;
+    --ant-primary-color-deprecated-f-12: rgba(74, 107, 138, 0.12);
+    --ant-primary-color-active-deprecated-f-30: rgba(233, 238, 243, 0.3);
+    --ant-primary-color-active-deprecated-d-02: #e0e6ec;
+}

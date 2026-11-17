@@ -1,7 +1,7 @@
-using System.Security.Cryptography;
 using MimeKit;
 using Apiext.Fs.Models.Api.Common;
 using Apiext.Fs.Models.Api.Objects;
+using Apiext.Fs.Models.Entities;
 
 namespace Apiext.Fs.Services;
 
@@ -9,18 +9,22 @@ namespace Apiext.Fs.Services;
 /// Object service backed by the native file system.
 /// Objects are stored as plain files under <c>{StoreLocation}/{bucket}/{key}</c>.
 /// Directory separators in keys are mapped to the host OS separator.
-/// No metadata sidecar files are written; ETag is computed from the file bytes on write
-/// and from file metadata on read (for speed).
+///
+/// ETags are always the content MD5 of the object file, cached in
+/// <see cref="IObjectIndexService"/> so Get/Head/List agree and repeat reads
+/// do not re-hash the whole file.
 /// </summary>
 public sealed class FileSystemObjectService : IS3ObjectService
 {
     private readonly string _root;
+    private readonly IObjectIndexService _index;
     private const int StreamCopyBufferSize = 81_920; // 80 KB
 
-    public FileSystemObjectService(IConfiguration config)
+    public FileSystemObjectService(IConfiguration config, IObjectIndexService index)
     {
         _root = Path.GetFullPath(config["StoreLocation"]
             ?? throw new InvalidOperationException("StoreLocation is not configured."));
+        _index = index;
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -36,27 +40,74 @@ public sealed class FileSystemObjectService : IS3ObjectService
             throw new KeyNotFoundException($"NoSuchBucket:{bucket}");
     }
 
-    private static string ComputeETag(string filePath)
-    {
-        using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read,
-            FileShare.Read, StreamCopyBufferSize, useAsync: true);
-        var hash = MD5.HashData(stream);
-        return $"\"{Convert.ToHexString(hash).ToLowerInvariant()}\"";
-    }
-
-    private static GetObjectResponse BuildMeta(string bucket, string key, string filePath)
+    /// <summary>
+    /// Builds response metadata. Uses the cached index entry when size and
+    /// last-write ticks still match the file; otherwise hashes the content once
+    /// and refreshes the cache.
+    /// </summary>
+    private async Task<GetObjectResponse> BuildMetaAsync(
+        string bucket, string key, string filePath, CancellationToken ct)
     {
         var fi = new FileInfo(filePath);
+        var ticks = fi.LastWriteTimeUtc.Ticks;
+
+        var entry = await _index.GetAsync(bucket, key, ct);
+        if (entry is not null && entry.Size == fi.Length && entry.LastWriteUtcTicks == ticks)
+        {
+            return new GetObjectResponse
+            {
+                Bucket = bucket,
+                Key = key,
+                ETag = entry.ETag,
+                ContentLength = fi.Length,
+                ContentType = entry.ContentType ?? MimeTypes.GetMimeType(filePath),
+                LastModified = fi.LastWriteTimeUtc.ToString("R"),
+                StorageClass = S3StorageClass.Standard
+            };
+        }
+
+        var etag = ObjectETag.ComputeFromFile(filePath);
+        var contentType = MimeTypes.GetMimeType(filePath);
+        await _index.UpsertAsync(new ObjectIndexEntry
+        {
+            Bucket = bucket,
+            Key = key,
+            Size = fi.Length,
+            LastWriteUtcTicks = ticks,
+            ETag = etag,
+            ContentType = contentType,
+            LastModified = fi.LastWriteTimeUtc.ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
+        }, ct);
+
         return new GetObjectResponse
         {
             Bucket = bucket,
             Key = key,
-            ETag = ComputeETag(filePath),
+            ETag = etag,
             ContentLength = fi.Length,
-            ContentType = MimeTypes.GetMimeType(filePath),
+            ContentType = contentType,
             LastModified = fi.LastWriteTimeUtc.ToString("R"),
             StorageClass = S3StorageClass.Standard
         };
+    }
+
+    /// <summary>Refreshes the index entry for a file that was just written.</summary>
+    private async Task<string> RefreshIndexAsync(
+        string bucket, string key, string filePath, CancellationToken ct)
+    {
+        var fi = new FileInfo(filePath);
+        var etag = ObjectETag.ComputeFromFile(filePath);
+        await _index.UpsertAsync(new ObjectIndexEntry
+        {
+            Bucket = bucket,
+            Key = key,
+            Size = fi.Length,
+            LastWriteUtcTicks = fi.LastWriteTimeUtc.Ticks,
+            ETag = etag,
+            ContentType = MimeTypes.GetMimeType(filePath),
+            LastModified = fi.LastWriteTimeUtc.ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
+        }, ct);
+        return etag;
     }
 
     // ── PutObject ─────────────────────────────────────────────────────────────
@@ -87,22 +138,22 @@ public sealed class FileSystemObjectService : IS3ObjectService
             throw;
         }
 
-        var etag = ComputeETag(destPath);
+        var etag = await RefreshIndexAsync(request.Bucket, request.Key, destPath, ct);
         return new PutObjectResponse { ETag = etag };
     }
 
     // ── GetObject ─────────────────────────────────────────────────────────────
 
-    public Task<(GetObjectResponse Meta, Stream Body)?> GetObjectAsync(
+    public async Task<(GetObjectResponse Meta, Stream Body)?> GetObjectAsync(
         GetObjectRequest request, CancellationToken ct = default)
     {
         EnsureBucketExists(request.Bucket);
 
         var filePath = ObjectPath(request.Bucket, request.Key);
         if (!File.Exists(filePath))
-            return Task.FromResult<(GetObjectResponse, Stream)?>(null);
+            return null;
 
-        var meta = BuildMeta(request.Bucket, request.Key, filePath);
+        var meta = await BuildMetaAsync(request.Bucket, request.Key, filePath, ct);
 
         // ── Conditional headers ────────────────────────────────────────────
         if (!string.IsNullOrEmpty(request.IfMatch) && request.IfMatch != meta.ETag)
@@ -133,31 +184,31 @@ public sealed class FileSystemObjectService : IS3ObjectService
                 FileShare.Read, StreamCopyBufferSize, useAsync: true);
             rangeStream.Seek(start, SeekOrigin.Begin);
             Stream sliced = new BoundedStream(rangeStream, length);
-            return Task.FromResult<(GetObjectResponse, Stream)?>((meta, sliced));
+            return (meta, sliced);
         }
 
         Stream fullStream = new FileStream(filePath, FileMode.Open, FileAccess.Read,
             FileShare.Read, StreamCopyBufferSize, useAsync: true);
-        return Task.FromResult<(GetObjectResponse, Stream)?>((meta, fullStream));
+        return (meta, fullStream);
     }
 
     // ── HeadObject ────────────────────────────────────────────────────────────
 
-    public Task<GetObjectResponse?> HeadObjectAsync(
+    public async Task<GetObjectResponse?> HeadObjectAsync(
         GetObjectRequest request, CancellationToken ct = default)
     {
         EnsureBucketExists(request.Bucket);
 
         var filePath = ObjectPath(request.Bucket, request.Key);
         if (!File.Exists(filePath))
-            return Task.FromResult<GetObjectResponse?>(null);
+            return null;
 
-        return Task.FromResult<GetObjectResponse?>(BuildMeta(request.Bucket, request.Key, filePath));
+        return await BuildMetaAsync(request.Bucket, request.Key, filePath, ct);
     }
 
     // ── DeleteObject ──────────────────────────────────────────────────────────
 
-    public Task<DeleteObjectResponse> DeleteObjectAsync(
+    public async Task<DeleteObjectResponse> DeleteObjectAsync(
         DeleteObjectRequest request, CancellationToken ct = default)
     {
         EnsureBucketExists(request.Bucket);
@@ -170,12 +221,16 @@ public sealed class FileSystemObjectService : IS3ObjectService
             TryPruneEmptyDirs(Path.GetDirectoryName(filePath)!, BucketPath(request.Bucket));
         }
 
-        return Task.FromResult(new DeleteObjectResponse());
+        // Always drop the cache entry: it may be an orphan left by an external
+        // delete performed directly on the file system.
+        await _index.DeleteAsync(request.Bucket, request.Key, ct);
+
+        return new DeleteObjectResponse();
     }
 
     // ── DeleteObjects ─────────────────────────────────────────────────────────
 
-    public Task<DeleteObjectsResponse> DeleteObjectsAsync(
+    public async Task<DeleteObjectsResponse> DeleteObjectsAsync(
         string bucket, DeleteObjectsRequest request, CancellationToken ct = default)
     {
         EnsureBucketExists(bucket);
@@ -201,7 +256,9 @@ public sealed class FileSystemObjectService : IS3ObjectService
             }
         }
 
-        return Task.FromResult(new DeleteObjectsResponse { Deleted = deleted, Errors = errors });
+        await _index.DeleteManyAsync(bucket, request.Objects.Select(o => o.Key).ToList(), ct);
+
+        return new DeleteObjectsResponse { Deleted = deleted, Errors = errors };
     }
 
     // ── CopyObject ────────────────────────────────────────────────────────────
@@ -230,7 +287,8 @@ public sealed class FileSystemObjectService : IS3ObjectService
         await Task.Run(() => File.Copy(srcPath, destPath, overwrite: true), ct);
 
         var fi = new FileInfo(destPath);
-        var etag = ComputeETag(destPath);
+        var etag = await RefreshIndexAsync(
+            request.DestinationBucket, request.DestinationKey, destPath, ct);
 
         return new CopyObjectResponse
         {

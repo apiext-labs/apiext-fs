@@ -1,6 +1,9 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Apiext.Fs.Data;
+using Apiext.Fs.Services;
 
 namespace Apiext.Fs.Tests.Infrastructure;
 
@@ -27,6 +30,19 @@ internal static class TestFactory
                 ["StaticPassword"]    = password
             })
             .Build();
+
+    /// <summary>Creates an object index backed by a fresh in-memory database.</summary>
+    public static IObjectIndexService CreateIndex(string dbName)
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddDbContextFactory<AppDbContext>(o => o.UseInMemoryDatabase(dbName));
+        var provider = services.BuildServiceProvider();
+
+        return new ObjectIndexService(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            NullLogger<ObjectIndexService>.Instance);
+    }
 
     public static IDbContextFactory<AppDbContext> CreateInMemoryDbFactory(string dbName)
     {
